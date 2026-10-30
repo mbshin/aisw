@@ -1,122 +1,140 @@
 #!/usr/bin/env bash
-# aisw = the manager; an agent's name = start that agent.
-# Start Claude Code on the first account that is not used up; when that account hits its limit
-# and you /exit, go on with the same conversation on the next free account.
+# aisw: one list of AI accounts (Claude Code, Codex, Antigravity); pick the current one and start it.
 #
-# Start agents:
-#   aisw claude [a|b|c] [claude args...]  first free account (a first), or force one
-#   aisw codex | agy             hand this folder's newest Claude session to Codex / Antigravity (fallback.sh)
-#   aisw a|b|c ..., aisw -x ...  same as aisw claude ... (kept for old scripts)
-#   aisw claude --dry-run [...]  print the command instead of running it
-# Manage:
-#   aisw                         dashboard (same as aisw ui)
-#   aisw help | -h               this list
-#   aisw status                  show all accounts
-#   aisw who                     show who is logged in to each account
-#   aisw login [a|b|c|codex|agy]  log in to one account (or Codex / Antigravity), or to every missing account
-#   aisw ui | u                  dashboard of the three accounts (start, login, reset limit)
-#   aisw resume [words]          pick a past conversation (any folder) with fzf, resume it on a free account
-#   aisw setup | unsetup         make the account folders + status line + limit hook / take them out again
-#   aisw test-hit a|b|c [dir]    pretend an account just hit its limit (to try a switch)
+#   aisw [options]                 start the current account's AI CLI (claude, codex, agy); options pass through
+#   aisw list                      dashboard of every account (a plain table when piped)
+#   aisw add claude|codex|agy [name]  new account, signed in right away
+#   aisw login <name>              sign an account in again
+#   aisw remove <name>             take an account off the list (folder and login stay)
+#   aisw activate <name>           make it the current account of this shell (and of new shells)
+#   aisw deactivate                no current account: plain claude / codex use their own login again
+#   aisw help                      this list
+# Hidden: aisw shell-init zsh|bash (the ~/.zshrc line), aisw __names (Tab completion), aisw --version.
 . "$(dirname "$0")/common.sh"
-. "$(dirname "$0")/fallback.sh"
+. "$(dirname "$0")/tools.sh"
 
-CLAUDE_BIN=${AISW_CLAUDE:-claude}
-WAIT=${AISW_WAIT:-3}
-RESUME_PROMPT="The previous turn was cut off by the usage limit and this session moved to another account. \
-Run git status and git diff, check what was half done, then continue the task."
+VERSION=2.0.0
+COMMANDS="list add login remove activate deactivate help"
+RC_LINE='command -v aisw >/dev/null && eval "$(aisw shell-init zsh)"'
+RC_COMMENT='# aisw: lets `aisw activate` change this shell'
 
-upper() { tr '[:lower:]' '[:upper:]' <<<"$1"; }
+# --- current account -------------------------------------------------------------------------------
 
-show_status() {
-  local acct until
-  for acct in $ACCOUNTS; do
-    until=$(blocked_until "$acct")
-    if [ -n "$until" ]; then
-      echo "$(upper "$acct"): used up until $(hhmm "$until")"
-    elif [ -f "$STATE/$acct.usage.json" ]; then
-      echo "$(upper "$acct"): free ($(jq -r '"5h \(.five_hour.used_percentage // "?")% · 7d \(.seven_day.used_percentage // "?")%"' "$STATE/$acct.usage.json"))"
-    else
-      echo "$(upper "$acct"): free (no usage seen yet)"
-    fi
-  done
+# This shell's account (set by activate), else the one remembered for new shells.
+current() {
+  if has_account "${AISW_ACCOUNT:-}"; then echo "$AISW_ACCOUNT"; return; fi
+  local c
+  c=$(cat "$STATE/current" 2>/dev/null)
+  if has_account "$c"; then echo "$c"; fi
 }
 
-# One line per account: "A: someone@example.com · Example Inc (Claude Team account)" or "A: not logged in".
-# A personal plan's organization is named "<email>'s Organization"; shown as "personal".
-show_who() {
-  local acct out org
-  for acct in $ACCOUNTS; do
-    out=$(CLAUDE_CONFIG_DIR=$HOME/.claude-$acct "$CLAUDE_BIN" auth status --text 2>&1)
-    if grep -q '^Email:' <<<"$out"; then
-      org=$(sed -n 's/^Organization: //p' <<<"$out")
-      case $org in *"'s Organization") org=personal ;; esac
-      echo "$(upper "$acct"): $(sed -n 's/^Email: //p' <<<"$out")${org:+ · $org} ($(sed -n 's/^Login method: //p' <<<"$out"))"
-    else
-      echo "$(upper "$acct"): not logged in"
-    fi
-  done
-}
-
-# Close the empty-profile sign-in windows that signin-browser.sh opened, and delete their profiles.
-close_signin_browser() {
-  pkill -f -- '--user-data-dir=.*aisw-login\.' 2>/dev/null || true
-  rm -rf "${TMPDIR:-/tmp}"/aisw-login.*
-}
-
-# Email to pre-fill on the sign-in page: the account's current login, else the one saved last time,
-# else asked once. Kept in $STATE/<x>.email on this Mac only.
-login_email() {
-  local acct=$1 email
-  email=$(CLAUDE_CONFIG_DIR=$HOME/.claude-$acct "$CLAUDE_BIN" auth status --text 2>/dev/null | sed -n 's/^Email: //p')
-  [ -n "$email" ] || email=$(cat "$STATE/$acct.email" 2>/dev/null)
-  if [ -z "$email" ] && [ -t 0 ]; then read -rp "Email for account $(upper "$acct") (Enter to skip): " email; fi
-  echo "$email"
-}
-
-# login_one <a|b|c> [claude auth login args...]: without args, pre-fills the email from login_email.
-login_one() {
-  local acct=$1 email code
-  shift
-  if [ $# -eq 0 ]; then
-    email=$(login_email "$acct")
-    if [ -n "$email" ]; then set -- --email "$email"; fi
+# Shell lines that make <name> current (or none current, without a name).
+env_lines() {
+  local name=${1:-} tool dir
+  if [ -z "$name" ]; then
+    echo "unset AISW_ACCOUNT CLAUDE_CONFIG_DIR CODEX_HOME"
+    return
   fi
-  echo "== Account $(upper "$acct")${email:+ ($email)}: sign in in the new browser window"
-  CLAUDE_CONFIG_DIR=$HOME/.claude-$acct "$CLAUDE_BIN" auth login "$@"
-  code=$?
-  close_signin_browser
-  email=$(CLAUDE_CONFIG_DIR=$HOME/.claude-$acct "$CLAUDE_BIN" auth status --text 2>/dev/null | sed -n 's/^Email: //p')
-  if [ -n "$email" ]; then echo "$email" > "$STATE/$acct.email"; fi
-  return $code
+  tool=$(tool_of "$name"); dir=$(folder_of "$name")
+  printf 'export AISW_ACCOUNT=%q\n' "$name"
+  case $tool in
+    claude) printf 'export CLAUDE_CONFIG_DIR=%q\nunset CODEX_HOME\n' "$dir" ;;
+    codex)
+      echo "unset CLAUDE_CONFIG_DIR"
+      if [ "$dir" = "$HOME/.codex" ]; then echo "unset CODEX_HOME"; else printf 'export CODEX_HOME=%q\n' "$dir"; fi
+      ;;
+    *) echo "unset CLAUDE_CONFIG_DIR CODEX_HOME" ;;
+  esac
 }
 
-do_login() {
-  local acct code=0
-  # The sign-in page opens in an empty browser profile, so no existing Claude login is reused.
-  export BROWSER
-  BROWSER=${AISW_BROWSER:-$(dirname "$0")/signin-browser.sh} # AISW_BROWSER: tests only
-  case ${1:-} in
-    codex|codex[1-9]|agy)
-      # One step: a successful login also puts the tool on the fallback list (off: aisw unsetup --codex|--agy).
-      if "$(tool_base "$1")_login" "$1" "${2:-}" && fallback_logged_in "$1"; then
-        fallback_enabled "$1" || { fallback_add "$1"; echo "$(tool_label "$1") added as a fallback (off: aisw unsetup --$1)."; }
-      else
-        code=1
-      fi
-      ;;
-    a|b|c) login_one "$@" || code=1 ;;
-    "")
-      for acct in $ACCOUNTS; do
-        show_who | grep -q "^$(upper "$acct"): not logged in" || continue
-        login_one "$acct" || return 1
-      done
-      ;;
-    *) echo "usage: aisw login [a|b|c|codex|codex2…|agy] [claude auth login args...]" >&2; return 1 ;;
+# Hand the lines to the calling shell: the shell-init function sources $STATE/env.<its pid> after aisw
+# exits. Without it (no ~/.zshrc line yet), print them for eval when piped, else explain.
+apply_env() {
+  if [ -n "${AISW_SHELL_PID:-}" ]; then
+    env_lines "$@" > "$STATE/env.$AISW_SHELL_PID"
+  elif [ ! -t 1 ]; then
+    env_lines "$@"
+  else
+    echo "This shell can't be changed without aisw's ~/.zshrc line. For now: eval \"\$(aisw ${1:+activate $1}${1:-deactivate})\"" >&2
+    echo "(the line is added by aisw add / aisw login, or by hand: $RC_LINE)" >&2
+  fi
+}
+
+do_activate() {
+  local name=${1:-}
+  if [ -z "$name" ]; then echo "usage: aisw activate <name>   (names: $(names | tr '\n' ' '))" >&2; return 1; fi
+  if ! has_account "$name"; then unknown_account "$name"; return 1; fi
+  echo "$name" > "$STATE/current"
+  apply_env "$name"
+  [ -t 1 ] || [ -n "${AISW_SHELL_PID:-}" ] || return 0
+  echo "$name is the current account ($(tool_label "$(tool_of "$name")")). Start it: aisw" >&2
+}
+
+do_deactivate() {
+  rm -f "$STATE/current"
+  apply_env
+  [ -t 1 ] || [ -n "${AISW_SHELL_PID:-}" ] || return 0
+  echo "No current account: plain claude / codex use their own login again." >&2
+}
+
+unknown_account() {
+  local hint=
+  case $1 in
+    claude|codex|codex[0-9]|agy) hint=" Accounts have names now (aisw list); new one: aisw add ${1%%[0-9]*}" ;;
   esac
-  show_who
-  fallback_who
-  return $code
+  echo "No account named '$1'.$hint" >&2
+}
+
+# --- start the current account's AI CLI ------------------------------------------------------------
+
+launch() {
+  local name tool dir bin
+  name=$(current)
+  if [ -z "$name" ]; then
+    if [ -s "$ACCOUNTS_FILE" ]; then
+      echo "No current account. Pick one: aisw activate <name>   (names: $(names | tr '\n' ' '))" >&2
+    else
+      echo "No accounts yet. Add one: aisw add claude|codex|agy" >&2
+    fi
+    return 1
+  fi
+  tool=$(tool_of "$name"); dir=$(folder_of "$name"); bin=$(tool_bin "$tool")
+  tool_missing "$tool" && return 1
+  if [ "$tool" = claude ] && [ ! -d "$dir" ]; then echo "Missing $dir: aisw login $name" >&2; return 1; fi
+  # Codex continues the last conversation with `codex resume --last`, not --continue.
+  if [ "$tool" = codex ] && { [ "${1:-}" = --continue ] || [ "${1:-}" = -c ]; }; then
+    shift; set -- resume --last "$@"
+  fi
+  export AISW_ACCOUNT=$name
+  in_folder "$tool" "$dir" "$bin" "$@"
+}
+
+# --- list ------------------------------------------------------------------------------------------
+
+pct() { jq -r ".$1.used_percentage // empty | floor | \"\\(.)%\"" "$STATE/$2.usage.json" 2>/dev/null; }
+
+list_plain() {
+  local cur name tool dir login plan state until f5 f7 mark
+  cur=$(current)
+  if [ ! -s "$ACCOUNTS_FILE" ]; then echo "No accounts yet. Add one: aisw add claude|codex|agy"; return 0; fi
+  printf '  %-6s %-7s %-30s %-6s %-18s %-5s %s\n' NAME TOOL LOGIN PLAN STATE 5H 7D
+  while read -r name tool dir; do
+    login=- plan=- f5=- f7=-
+    case $tool in
+      claude)
+        IFS=$'\t' read -r login plan _ < <(claude_login "$dir")
+        if [ -z "$login" ]; then login=- plan=- state="not signed in"
+        elif until=$(blocked_until "$name") && [ -n "$until" ]; then state="used up → $(date -r "$until" +%H:%M)"
+        else state=free; fi
+        f5=$(pct five_hour "$name"); f7=$(pct seven_day "$name")
+        ;;
+      codex) login=ChatGPT; if codex_signed_in "$dir"; then state="signed in"; else state="not signed in"; fi ;;
+      agy) login=Google; if agy_signed_in; then state="signed in"; else state="not signed in"; fi ;;
+    esac
+    mark=" "; [ "$name" = "$cur" ] && mark="*"
+    printf '%s %-6s %-7s %-30s %-6s %-18s %-5s %s\n' "$mark" "$name" "$tool" "${login:--}" "${plan:--}" "$state" \
+      "${f5:--}" "${f7:--}"
+  done < "$ACCOUNTS_FILE"
 }
 
 # AISW_UI replaces the dashboard command, for tests.
@@ -124,158 +142,248 @@ ui_cmd() {
   if [ -n "${AISW_UI:-}" ]; then "$AISW_UI"; else uv run --quiet --script "$(dirname "$0")/ui.py"; fi
 }
 
-# The TUI quits to start or log in (both need the whole terminal) and leaves "start a" / "login b" in a file.
-run_ui() {
-  local result choice
+# The dashboard quits for anything that needs the terminal and leaves "<action> <name>" in a file.
+do_list() {
+  if [ ! -t 1 ] || [ ! -t 0 ] || { [ -z "${AISW_UI:-}" ] && ! command -v uv >/dev/null; }; then
+    list_plain
+    return
+  fi
+  local result choice tool
   result=$(mktemp)
   while :; do
     : > "$result"
-    AISW_UI_RESULT=$result ui_cmd || break
+    AISW_UI_RESULT=$result AISW_CURRENT=$(current) ui_cmd || break
     choice=$(cat "$result")
     case $choice in
-      "start "[abc]) rm -f "$result"; exec "$0" claude "${choice#start }" ;;
-      "login "[abc]) do_login "${choice#login }" ;;
+      "launch "*) rm -f "$result"; do_activate "${choice#launch }" 2>/dev/null; launch; return ;;
+      "activate "*) do_activate "${choice#activate }"; break ;;
+      "login "*) do_login "${choice#login }" ;;
+      "remove "*) do_remove "${choice#remove }" ;;
+      add)
+        read -rp "Add which tool (claude, codex, agy)? " tool
+        [ -n "$tool" ] && do_add "$tool"
+        ;;
       *) break ;;
     esac
   done
   rm -f "$result"
 }
 
-# First real thing the user typed in a session file (skips meta lines and <command…> wrappers).
-FIRST_MESSAGE='first(inputs | select(.type == "user" and (.isMeta | not)) | .message.content
-  | if type == "string" then . else (map(select(.type == "text").text) | first // empty) end
-  | select(startswith("<") | not)) | gsub("\\s+"; " ") | .[0:100]'
+# --- add / login / remove --------------------------------------------------------------------------
 
-list_sessions() {
-  local f cwd msg
-  ls -t "$HOME"/.claude/projects/*/*.jsonl 2>/dev/null | head -300 | while read -r f; do
-    cwd=$(jq -nr 'first(inputs | .cwd // empty)' "$f" 2>/dev/null)
-    [ -n "$cwd" ] || continue
-    msg=$(jq -nr "$FIRST_MESSAGE" "$f" 2>/dev/null)
-    printf '%s\t%s\t%-16s  %-28s  %s\n' "$f" "$cwd" "$(date -r "$f" '+%a %m-%d %H:%M')" \
-      "${cwd/#$HOME/~}" "${msg:-(no message)}"
-  done
+backup() { cp "$1" "$1.bak-$(date +%Y%m%d-%H%M%S)" && echo "  backup: $1.bak-…"; }
+
+# Where the hooks should point: Homebrew's stable opt/ path, so upgrades don't break settings.json.
+lib_dir() {
+  local lib
+  lib=$(cd "$(dirname "$0")" && pwd)
+  case $lib in */Cellar/aisw/*/libexec) lib=${lib%%/Cellar/*}/opt/aisw/libexec ;; esac
+  echo "$lib"
 }
 
-pick_session() {
-  local fzf=${AISW_FZF:-fzf} line f cwd
-  line=$(list_sessions | "$fzf" --delimiter='\t' --with-nth=3 --no-sort --query="$*" \
-    --prompt='resume> ' --header='enter: resume on the first free account · esc: cancel' \
-    --preview="jq -r 'select(.type == \"user\" and (.isMeta | not)) | .message.content | strings
-      | select(startswith(\"<\") | not)' {1} | head -40" --preview-window=down,40%,wrap) || return 1
-  f=$(cut -f1 <<<"$line"); cwd=$(cut -f2 <<<"$line")
-  cd "$cwd" || { echo "Folder is gone: $cwd" >&2; return 1; }
-  exec "$0" claude --resume "$(basename "$f" .jsonl)"
+rc_file() { case ${SHELL:-} in *bash) echo "$HOME/.bashrc" ;; *) echo "$HOME/.zshrc" ;; esac; }
+
+setup_done() {
+  local settings=$HOME/.claude/settings.json
+  jq -e '(.statusLine.command // "" | endswith("/statusline.sh"))
+    and ([.hooks.StopFailure[]?.hooks[]?.command] | any(endswith("/on-limit.sh")))' "$settings" >/dev/null 2>&1 \
+    && grep -qF "aisw shell-init" "$(rc_file)" 2>/dev/null
+}
+
+# Once, on the first add or login: the status line + limit hook (shared by every Claude account) and
+# the shell line. Asks first (Enter = yes); a "no" is remembered.
+ensure_setup() {
+  local ans settings=$HOME/.claude/settings.json rc lib
+  setup_done && return 0
+  [ -f "$STATE/setup-declined" ] && return 0
+  rc=$(rc_file)
+  if [ -t 0 ]; then
+    echo "First time: aisw adds its status line and limit hook to ~/.claude/settings.json and one line to"
+    read -rp "${rc/#$HOME/~} (so aisw activate can change the shell). OK? [Y/n] " ans
+    case $ans in n|N|no) touch "$STATE/setup-declined"; return 0 ;; esac
+  fi
+  lib=$(lib_dir)
+  mkdir -p "$HOME/.claude/projects" "$HOME/.claude/skills" "$HOME/.claude/plugins"
+  [ -f "$settings" ] || echo '{}' > "$settings"
+  backup "$settings"
+  jq --arg sl "$lib/statusline.sh" --arg hook "$lib/on-limit.sh" '
+    .statusLine = {type: "command", command: $sl}
+    | .hooks.StopFailure = ((.hooks.StopFailure // [])
+        | map(select(([.hooks[]?.command] | any(endswith("/on-limit.sh"))) | not))
+        + [{matcher: "rate_limit", hooks: [{type: "command", command: $hook}]}])
+  ' "$settings" > "$settings.tmp" && mv "$settings.tmp" "$settings"
+  echo "  ~/.claude/settings.json: status line and limit hook"
+  if ! grep -qF "aisw shell-init" "$rc" 2>/dev/null; then
+    [ -f "$rc" ] && backup "$rc"
+    case $rc in *bashrc) printf '\n%s\n%s\n' "$RC_COMMENT" "${RC_LINE/zsh/bash}" >> "$rc" ;;
+      *) printf '\n%s\n%s\n' "$RC_COMMENT" "$RC_LINE" >> "$rc" ;; esac
+    echo "  ${rc/#$HOME/~}: aisw line (open a new terminal for aisw activate)"
+  fi
+}
+
+SHARED="projects settings.json skills plugins"
+
+# A Claude account folder shares conversations, settings, skills and plugins with ~/.claude.
+make_claude_folder() {
+  local n
+  mkdir -p "$1"
+  for n in $SHARED; do ln -sfn "$HOME/.claude/$n" "$1/$n"; done
+}
+
+valid_name() {
+  [[ $1 =~ ^[a-z0-9][a-z0-9_-]{0,15}$ ]] || { echo "Names: lowercase letters, digits, - and _ (up to 16)." >&2; return 1; }
+  case " $COMMANDS $TOOLS default main " in *" $1 "*) echo "'$1' is a command or tool name." >&2; return 1 ;; esac
+  if has_account "$1"; then echo "There is already an account named '$1'." >&2; return 1; fi
+}
+
+next_letter() {
+  local l
+  for l in {a..z}; do has_account "$l" || { echo "$l"; return; }; done
+  return 1
+}
+
+do_add() {
+  local tool=${1:-} name=${2:-} dir made=
+  case " $TOOLS " in *" $tool "*) ;; *) echo "usage: aisw add claude|codex|agy [name]" >&2; return 1 ;; esac
+  if [ -n "$name" ]; then valid_name "$name" || return 1; else name=$(next_letter) || return 1; fi
+  tool_missing "$tool" && return 1
+  case $tool in
+    claude) dir=$STATE/home/$name ;;
+    codex)
+      dir=$HOME/.codex
+      if [ -n "$(names_of_tool codex)" ] && awk '$2 == "codex"' "$ACCOUNTS_FILE" | grep -q " $HOME/.codex$"; then
+        dir=$STATE/home/$name
+      fi
+      ;;
+    agy)
+      if [ -n "$(names_of_tool agy)" ]; then
+        echo "Only one Antigravity account for now ($(names_of_tool agy)): a second one isn't supported yet." >&2
+        return 1
+      fi
+      dir=$HOME/.gemini/antigravity-cli
+      ;;
+  esac
+  ensure_setup
+  if [ ! -d "$dir" ]; then made=1; fi
+  case $tool in claude) make_claude_folder "$dir" ;; codex) mkdir -p "$dir" ;; esac
+  if signed_in "$tool" "$dir"; then
+    echo "$name: already signed in."
+  elif ! sign_in "$name" "$tool" "$dir"; then
+    echo "Sign-in didn't finish: $name not added." >&2
+    if [ -n "$made" ] && [ "${dir#"$STATE"/home/}" != "$dir" ]; then rm -rf "$dir"; fi
+    return 1
+  fi
+  echo "$name $tool $dir" >> "$ACCOUNTS_FILE"
+  echo "Added $name ($(tool_label "$tool")). Use it: aisw activate $name"
+}
+
+do_login() {
+  local name=${1:-} tool dir ans
+  if [ -z "$name" ]; then echo "usage: aisw login <name>   (names: $(names | tr '\n' ' '))" >&2; return 1; fi
+  if ! has_account "$name"; then unknown_account "$name"; return 1; fi
+  tool=$(tool_of "$name"); dir=$(folder_of "$name")
+  ensure_setup
+  if [ "$tool" != claude ] && signed_in "$tool" "$dir"; then
+    # A new Codex sign-in replaces the old one, and a cancelled one leaves it logged out: ask first.
+    if [ "$tool" = agy ] || [ ! -t 0 ]; then echo "$name: already signed in."; return 0; fi
+    read -rp "$name is signed in. Sign in again? [y/N] " ans
+    case $ans in y|Y|yes) ;; *) return 0 ;; esac
+  fi
+  [ "$tool" = claude ] && make_claude_folder "$dir"
+  sign_in "$name" "$tool" "$dir"
+}
+
+do_remove() {
+  local name=${1:-} dir
+  if [ -z "$name" ]; then echo "usage: aisw remove <name>" >&2; return 1; fi
+  if ! has_account "$name"; then unknown_account "$name"; return 1; fi
+  dir=$(folder_of "$name")
+  awk -v n="$name" '$1 != n' "$ACCOUNTS_FILE" > "$ACCOUNTS_FILE.tmp" && mv "$ACCOUNTS_FILE.tmp" "$ACCOUNTS_FILE"
+  [ "$(cat "$STATE/current" 2>/dev/null)" = "$name" ] && rm -f "$STATE/current"
+  rm -f "$STATE/$name".{limit,usage.json,warned,email}
+  echo "Removed $name. Its folder and login stay in ${dir/#$HOME/~}."
+}
+
+# --- shell integration, completion, help -----------------------------------------------------------
+
+# `eval "$(aisw shell-init zsh)"` in ~/.zshrc: an aisw function that applies activate/deactivate to this
+# shell, then the account remembered for new shells. Works in zsh and bash.
+shell_init() {
+  cat <<'EOF2'
+aisw() {
+  local _aisw_rc _aisw_env="${AISW_STATE:-$HOME/.aisw}/env.$$"
+  AISW_SHELL_PID=$$ command aisw "$@"
+  _aisw_rc=$?
+  if [ -f "$_aisw_env" ]; then . "$_aisw_env"; rm -f "$_aisw_env"; fi
+  return $_aisw_rc
+}
+EOF2
+  local c
+  c=$(cat "$STATE/current" 2>/dev/null)
+  if has_account "$c"; then env_lines "$c"; fi
+}
+
+# For Tab completion: "<name>:<tool> <email>" per account; fast, from saved files only.
+completion_names() {
+  local name tool dir
+  while read -r name tool dir; do
+    echo "$name:$tool $(cat "$STATE/$name.email" 2>/dev/null)"
+  done < "$ACCOUNTS_FILE" 2>/dev/null
 }
 
 show_help() {
-  cat <<'EOF2'
-aisw (AI switch): keep coding when an AI agent hits its usage limit: next Claude account, then Codex
+  cat <<EOF2
+aisw $VERSION: one list of AI accounts (Claude Code, Codex, Antigravity). Pick one, start it.
 
-aisw alone: dashboard. Start agents:
-  aisw claude                first free Claude account, A → B → C
-  aisw claude a|b|c          force an account
-  aisw claude --continue     any Claude Code option passes through (--resume, -n name, ...)
-  aisw claude --dry-run      print which account would start
-  aisw codex | codex2 | agy  hand this folder's newest Claude session to Codex / Antigravity now
-  (alias claude='aisw claude' lets you type claude instead; aisw a|b|c still works)
+  aisw [options]                    start the current account's AI CLI (claude, codex, agy);
+                                    options pass through: aisw --continue
+  aisw list                         every account: login, plan, state, usage (* = current)
+                                    dashboard keys: ←→ select, a activate, enter start, l login,
+                                    n add, d remove, q quit
+  aisw add claude|codex|agy [name]  new account (next free letter, or the name), signed in right away
+  aisw login <name>                 sign an account in again
+  aisw remove <name>                take an account off the list (folder and login stay)
+  aisw activate <name>              make it the current account (this shell and new ones);
+                                    plain claude / codex use it too
+  aisw deactivate                   no current account: plain claude / codex use their own login
+  aisw help                         this help
 
-Accounts:
-  aisw who                   login, owner and plan of each account
-  aisw status                free, or used up until when (with usage %)
-  aisw ui (or aisw)          dashboard (←→ select, enter start, l login, r reset, q quit)
-  aisw resume [words]        find any past conversation with fzf and resume it
-  aisw login [a|b|c]         log in a Claude account (empty browser window, email pre-filled)
-  aisw login codex | agy     log in Codex (browser) / Antigravity; that also makes it a fallback
-  aisw login codex --device  Codex with a one-time code instead (ChatGPT must allow device code sign-in)
-  aisw login codex --again   sign Codex in again although it's signed in
-  aisw login codex2          a 2nd Codex account (own folder ~/.codex-2; codex3 … too)
-
-Setup and testing:
-  aisw setup | unsetup       add / remove account folders, status line and limit hook
-  aisw setup --codex | --agy turn a fallback on, in the order you add them (unsetup --codex|--agy: off)
-  aisw test-hit a|b|c [dir]  pretend an account just hit its limit
-
-Fallbacks (turned on by aisw login codex / agy; off: aisw unsetup --codex / --agy):
-  all Claude accounts used up → a menu: Codex, Antigravity, a Claude account anyway, or stop
-  (Codex/Antigravity get a handoff note); aisw codex / aisw agy hand over right away
-
-When a limit is hit: wait for the notification, type /exit, it goes on in the next account.
-Claude Code's own help: claude --help (or command claude --help). Docs: github.com/mbshin/aisw
+When an account hits its limit, the notification names the next free one:
+  /exit, aisw activate <next>, aisw --continue
+Docs: github.com/mbshin/aisw
 EOF2
 }
 
-# aisw alone opens the dashboard; aisw claude, a|b|c or -options start Claude.
-[ $# -eq 0 ] && { run_ui; exit; }
-dry=0 acct=
-if [ "$1" = --dry-run ]; then dry=1; shift; fi
+removed() {
+  echo "aisw $1 was removed in 2.0. $2" >&2
+  return 2
+}
+
+# --- main ------------------------------------------------------------------------------------------
+
 case ${1:-} in
-  help|-h) show_help; exit 0 ;;
-  status) show_status; exit 0 ;;
-  who) show_who; fallback_who; exit 0 ;;
-  codex|codex[1-9]|agy) go_tool "$1" "$(newest_session_in "$PWD")" "$PWD"; exit ;;
-  login) shift; do_login "$@"; exit ;;
-  ui|u) run_ui; exit ;;
-  resume) shift; pick_session "$@"; exit ;;
-  setup) shift; . "$(dirname "$0")/admin.sh"; do_setup "$@"; exit ;;
-  unsetup) shift; . "$(dirname "$0")/admin.sh"; do_unsetup "$@"; exit ;;
-  test-hit) shift; . "$(dirname "$0")/admin.sh"; do_test_hit "$@"; exit ;;
-  claude) shift ;;
+  ""|-*)
+    case ${1:-} in
+      --version|-V) echo "aisw $VERSION"; exit 0 ;;
+      -h|--help) show_help; exit 0 ;;
+      --) shift ;;
+    esac
+    launch "$@"; exit
+    ;;
+  list|ls) do_list ;;
+  add) shift; do_add "$@" ;;
+  login) shift; do_login "$@" ;;
+  remove|rm) shift; do_remove "$@" ;;
+  activate) shift; do_activate "$@" ;;
+  deactivate) do_deactivate ;;
+  help) show_help ;;
+  version) echo "aisw $VERSION" ;;
+  shell-init) shell_init ;;
+  __names) completion_names ;;
+  claude|codex|agy|codex[0-9]) removed "$1" "Pick the account, then start it: aisw activate <name>; aisw" ;;
+  who|status|ui|u) removed "$1" "Use: aisw list" ;;
+  resume) removed "$1" "Use: aisw --resume (Claude Code's own picker)" ;;
+  setup|unsetup) removed "$1" "aisw add / aisw login set things up the first time." ;;
+  test-hit|next) removed "$1" "" ;;
+  *) echo "Unknown command '$1'. aisw help lists them; to pass words to the AI CLI: aisw -- $*" >&2; exit 2 ;;
 esac
-if [ "${1:-}" = --dry-run ]; then dry=1; shift; fi
-case ${1:-} in a|b|c) acct=$1; shift ;; esac
-if [ "${1:-}" = --dry-run ]; then dry=1; shift; fi
-if [ -z "$acct" ]; then
-  acct=$(pick_account) || {
-    echo "All accounts are at their limit:" >&2
-    show_status >&2
-    pick=$(choose_when_used_up)
-    case $pick in
-      codex|codex[1-9]|agy) go_tool "$pick" "$(newest_session_in "$PWD")" "$PWD"; exit ;;
-      a) acct=a ;;
-      b) acct=b ;;
-      c) acct=c ;;
-      *) echo "Stopped. Later: aisw claude, or force one with aisw claude a|b|c" >&2; exit 1 ;;
-    esac
-  }
-fi
-
-while :; do
-  dir=$HOME/.claude-$acct
-  if [ ! -d "$dir" ]; then
-    echo "Missing $dir: run aisw setup." >&2
-    exit 1
-  fi
-  if [ "$dry" = 1 ]; then
-    echo "CLAUDE_CONFIG_DIR=$dir $CLAUDE_BIN $*"
-    exit 0
-  fi
-
-  started=$(now)
-  CLAUDE_CONFIG_DIR=$dir "$CLAUDE_BIN" "$@"
-  code=$?
-
-  # Go on only when this run's account left a handoff (on-limit.sh) during this run.
-  [ -f "$STATE/handoff.json" ] || exit $code
-  read -r from at sid cwd < <(jq -r '[.from, .at, .session_id, .cwd] | @tsv' "$STATE/handoff.json")
-  rm -f "$STATE/handoff.json"
-  if [ "$from" != "$acct" ] || [ "$at" -lt "$started" ]; then exit $code; fi
-
-  next=$(pick_account) || {
-    echo "All accounts are at their limit:" >&2
-    show_status >&2
-    pick=$(choose_when_used_up)
-    case $pick in
-      codex|codex[1-9]|agy) go_tool "$pick" "$(session_file "$sid")" "$cwd"; exit ;;
-      a) next=a ;;
-      b) next=b ;;
-      c) next=c ;;
-      *) echo "Resume later with: aisw claude --resume $sid" >&2; exit $code ;;
-    esac
-  }
-  echo "$(upper "$acct") hit its limit. Going on in $(upper "$next") in ${WAIT}s (Ctrl+C to stop)..."
-  sleep "$WAIT" || exit $code
-  cd "$cwd" || exit 1
-  acct=$next
-  set -- --resume "$sid" "$RESUME_PROMPT"
-done

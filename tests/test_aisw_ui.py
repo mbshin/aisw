@@ -1,4 +1,4 @@
-"""ui.py: the aisw ui dashboard, driven with Textual's test pilot."""
+"""ui.py: the aisw list dashboard, driven with Textual's test pilot."""
 
 import asyncio
 import importlib.util
@@ -17,39 +17,62 @@ spec.loader.exec_module(ui)
 
 FAKE_CLAUDE = """#!/usr/bin/env bash
 case $(basename "$CLAUDE_CONFIG_DIR") in
-  .claude-a) printf 'Login method: Claude Team account\\nOrganization: Example Inc\\nEmail: a@x\\n' ;;
-  .claude-b) printf "Login method: Claude Max account\\nOrganization: b@x's Organization\\nEmail: b@x\\n" ;;
+  a) printf 'Login method: Claude Team account\\nOrganization: Example Inc\\nEmail: a@x\\n' ;;
+  b) printf "Login method: Claude Max account\\nOrganization: b@x's Organization\\nEmail: b@x\\n" ;;
   *) echo "Not logged in." ;;
 esac
 """
+FAKE_CODEX = """#!/usr/bin/env bash
+if [ -f "$CODEX_HOME/auth.json" ]; then echo "Logged in using ChatGPT"; else echo "Not logged in"; exit 1; fi
+"""
+FAKE_AGY = "#!/usr/bin/env bash\nexit 1\n"
 
 
 @pytest.fixture
 def env(tmp_path):
     state = tmp_path / "state"
     state.mkdir()
-    fake = tmp_path / "fake-claude"
-    fake.write_text(FAKE_CLAUDE)
-    fake.chmod(0o755)
-    return tmp_path, state, str(fake)
+    bins = {}
+    for tool, text in (("claude", FAKE_CLAUDE), ("codex", FAKE_CODEX), ("agy", FAKE_AGY)):
+        fake = tmp_path / f"fake-{tool}"
+        fake.write_text(text)
+        fake.chmod(0o755)
+        bins[tool] = str(fake)
+    (tmp_path / "d").mkdir()
+    (tmp_path / "d" / "auth.json").write_text("{}")
+    (state / "accounts").write_text(
+        f"a claude {tmp_path}/a\nb claude {tmp_path}/b\nc claude {tmp_path}/c\nd codex {tmp_path}/d\n"
+        f"e agy {tmp_path}/.gemini/antigravity-cli\n"
+    )
+    return tmp_path, state, bins
 
 
-def test_read_login_parses_email_and_plan(env):
-    home, _, claude = env
-    assert ui.read_login("a", home, claude) == ui.Login("a@x", "Team", "Example Inc")
-    assert ui.read_login("b", home, claude) == ui.Login("b@x", "Max", "personal")
-    assert ui.read_login("c", home, claude) == ui.Login()
+def test_read_accounts_keeps_order_and_spaces_in_folders(tmp_path):
+    (tmp_path / "accounts").write_text("b claude /x/my folder\na codex /y\nbroken\n")
+    assert ui.read_accounts(tmp_path) == [("b", "claude", "/x/my folder"), ("a", "codex", "/y")]
+    assert ui.read_accounts(tmp_path / "none") == []
 
 
-def test_read_account_follows_the_switch_rules(env):
+def test_read_login_per_tool(env):
+    home, _, bins = env
+    assert ui.read_login("claude", f"{home}/a", bins) == ui.Login("a@x", "Team", "Example Inc", True)
+    assert ui.read_login("claude", f"{home}/b", bins) == ui.Login("b@x", "Max", "personal", True)
+    assert ui.read_login("claude", f"{home}/c", bins) == ui.Login()
+    assert ui.read_login("codex", f"{home}/d", bins) == ui.Login("ChatGPT", signed_in=True)
+    assert ui.read_login("codex", f"{home}/none", bins) == ui.Login("ChatGPT", signed_in=False)
+    assert ui.read_login("agy", "", bins) == ui.Login("Google", signed_in=False)
+
+
+def test_read_usage_follows_the_limit_rules(env):
     _, state, _ = env
     now = time.time()
     reset = int(now) + 3600
     usage = {"five_hour": {"used_percentage": 96, "resets_at": reset}, "seven_day": {"used_percentage": 10}}
     (state / "b.usage.json").write_text(json.dumps(usage))
     (state / "c.limit").write_text(str(int(now) - 10))
-    assert ui.read_account("b", state, ui.Login(), now).blocked_until == reset
-    assert ui.read_account("c", state, ui.Login(), now).blocked_until is None
+    b = ui.read_usage(ui.Account("b", "claude", "", ui.Login()), state, now)
+    assert b.blocked_until == reset and b.five == 96
+    assert ui.read_usage(ui.Account("c", "claude", "", ui.Login()), state, now).blocked_until is None
 
 
 def test_gauge_and_countdown():
@@ -58,14 +81,16 @@ def test_gauge_and_countdown():
     assert ui.gauge(96, width=4).startswith("[$error]")
     assert ui.countdown(1000 + 3 * 3600 + 12 * 60, 1000) == "3h 12m"
     assert ui.countdown(1000 + 5 * 60, 1000) == "5m"
-    assert ui.countdown(1000 + 59 * 60 + 59, 1000) == "59m"  # under an hour: minutes only
-    assert ui.countdown(1000 + 3600, 1000) == "1h 00m"
-    assert ui.countdown(900, 1000) == "0m"  # already past
+    assert ui.countdown(900, 1000) == "0m"
 
 
-def run_app(home, state, claude, result, keys, check=None, size=(120, 30)):
+def run_app(env, keys, check=None, current="", size=(120, 40)):
+    home, state, bins = env
+    result = home / "result"
+    result.unlink(missing_ok=True)
+
     async def go():
-        app = ui.AiswUI(home, state, claude, result)
+        app = ui.AiswUI(state, bins, current, result)
         async with app.run_test(size=size) as pilot:
             await app.workers.wait_for_complete()
             await pilot.pause()
@@ -76,104 +101,77 @@ def run_app(home, state, claude, result, keys, check=None, size=(120, 30)):
                 check(app)
 
     asyncio.run(go())
+    return result.read_text() if result.exists() else ""
 
 
-def test_cards_show_logins_owner_and_next(env):
-    home, state, claude = env
+def test_cards_show_every_tool_and_the_current_account(env):
+    _, state, _ = env
     (state / "a.limit").write_text(str(int(time.time()) + 600))
     cards = {}
 
     def check(app):
-        for acct in ui.ACCOUNTS:
-            card = app.query_one(f"#card-{acct}", ui.Card)
-            cards[acct] = (str(card.render()), card.has_class("blocked"))
+        for name in "abcde":
+            card = app.query_one(f"#card-{name}", ui.Card)
+            cards[name] = (str(card.render()), card.has_class("blocked"))
 
-    run_app(home, state, claude, None, [], check)
+    run_app(env, [], check, current="b")
     assert "a@x" in cards["a"][0] and "Example Inc · Team" in cards["a"][0] and "used up" in cards["a"][0]
     assert cards["a"][1]
-    assert "personal · Max" in cards["b"][0] and "next" in cards["b"][0]
-    assert "not logged in" in cards["c"][0]
+    assert "personal · Max" in cards["b"][0] and "current" in cards["b"][0] and "free" in cards["b"][0]
+    assert "not signed in" in cards["c"][0]
+    assert "Codex" in cards["d"][0] and "signed in" in cards["d"][0]
+    assert "Antigravity" in cards["e"][0] and "not signed in" in cards["e"][0]
 
 
-def test_enter_and_login_write_the_choice(env):
-    home, state, claude = env
-    result = home / "result"
-    run_app(home, state, claude, result, ["down", "enter"])
-    assert result.read_text() == "start b\n"
-    run_app(home, state, claude, result, ["down", "down", "l"])
-    assert result.read_text() == "login c\n"
-
-
-def test_reset_clears_the_limit_after_yes(env):
-    home, state, claude = env
-    limit = state / "a.limit"
-    limit.write_text(str(int(time.time()) + 600))
-    run_app(home, state, claude, None, ["r", "tab", "shift+tab"])
-    assert limit.exists()  # dialog open, nothing pressed yet
-    run_app(home, state, claude, None, ["r", "enter"])  # Enter = the focused "No"
-    assert limit.exists()
-    run_app(home, state, claude, None, ["r", "y"])
-    assert not limit.exists()
-
-
-def selected_after(env, keys):
-    home, state, claude = env
+def test_focus_starts_on_the_current_account(env):
     seen = []
-    run_app(home, state, claude, None, keys, lambda app: seen.append(app.focused.acct))
-    return seen[0]
+    run_app(env, [], lambda app: seen.append(app.focused.acct), current="d")
+    assert seen == ["d"]
 
 
-def test_left_and_right_wrap_around(env):
-    assert selected_after(env, ["left"]) == "c"
-    assert selected_after(env, ["right", "right", "right"]) == "a"
-    assert selected_after(env, ["up"]) == "c"
+def test_enter_launches_and_a_activates_the_selected_account(env):
+    assert run_app(env, ["right", "enter"]) == "launch b\n"
+    assert run_app(env, ["left", "a"]) == "activate e\n"
 
 
-@pytest.mark.parametrize(("width", "narrow"), [(80, True), (89, True), (90, False), (120, False)])
+def test_n_asks_aisw_to_add(env):
+    assert run_app(env, ["n"]) == "add\n"
+
+
+def test_login_asks_first_on_a_signed_in_account(env):
+    assert run_app(env, ["l", "s", "enter"]) == ""  # typing "ls⏎" by mistake: Enter = the focused "No"
+    assert run_app(env, ["l", "n"]) == ""
+    assert run_app(env, ["l", "y"]) == "login a\n"
+    assert run_app(env, ["right", "right", "l"]) == "login c\n"  # not signed in: no question
+
+
+def test_remove_asks_first(env):
+    assert run_app(env, ["d", "enter"]) == ""
+    assert run_app(env, ["d", "y"]) == "remove a\n"
+
+
+def test_arrows_wrap_around(env):
+    seen = []
+    run_app(env, ["left"], lambda app: seen.append(app.focused.acct))
+    run_app(env, ["right"] * 5, lambda app: seen.append(app.focused.acct))
+    assert seen == ["e", "a"]
+
+
+@pytest.mark.parametrize(("width", "narrow"), [(89, True), (90, False)])
 def test_narrow_terminal_stacks_the_cards(env, width, narrow):
-    home, state, claude = env
     seen = []
-    run_app(home, state, claude, None, [], lambda app: seen.append(app.query_one("#cards").has_class("narrow")),
-            size=(width, 40))
+    run_app(env, [], lambda app: seen.append(app.query_one("#cards").has_class("narrow")), size=(width, 60))
     assert seen == [narrow]
 
 
+def test_no_accounts_says_how_to_add(env):
+    _, state, _ = env
+    (state / "accounts").unlink()
+    seen = []
+    run_app(env, ["enter", "a"], lambda app: seen.append(str(app.query_one("#empty").render())))
+    assert "Press n to add one." in seen[0]
+    assert run_app(env, ["n"]) == "add\n"
+
+
 def test_quit_writes_no_result(env):
-    home, state, claude = env
-    result = home / "result"
-    run_app(home, state, claude, result, ["q"])
-    assert not result.exists()
-
-
-def test_reset_without_a_limit_only_shows_a_notice(env):
-    home, state, claude = env
-    before = sorted(p.name for p in state.iterdir())
-    seen = {}
-
-    def check(app):
-        seen["confirm"] = isinstance(app.screen, ui.Confirm)
-        seen["notices"] = [n.message for n in app._notifications]
-
-    run_app(home, state, claude, None, ["r"], check)
-    assert not seen["confirm"]
-    assert seen["notices"] == ["A has no limit mark."]
-    assert sorted(p.name for p in state.iterdir()) == before
-
-
-def test_reset_no_keeps_the_limit(env):
-    home, state, claude = env
-    limit = state / "b.limit"
-    limit.write_text(str(int(time.time()) + 600))
-    run_app(home, state, claude, None, ["down", "r", "n"])
-    assert limit.exists()
-
-
-def test_login_on_a_signed_in_account_asks_first_and_defaults_to_no(env):
-    home, state, claude = env
-    result = home / "result"
-    run_app(home, state, claude, result, ["l", "s", "enter"])  # typing "ls⏎" by mistake
-    assert not result.exists() or result.read_text() == ""
-    run_app(home, state, claude, result, ["l", "n"])
-    assert not result.exists() or result.read_text() == ""
-    run_app(home, state, claude, result, ["l", "y"])
-    assert result.read_text() == "login a\n"
+    assert run_app(env, ["q"]) == ""

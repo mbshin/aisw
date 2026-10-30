@@ -1,0 +1,42 @@
+#compdef aisw
+# zsh completion for aisw: subcommands, account names (with tool and email), tools for add.
+
+_aisw_accounts() {
+  local -a accts
+  local line
+  for line in ${(f)"$(command aisw __names 2>/dev/null)"}; do
+    accts+=("${line%%:*}:${line#*:}")
+  done
+  _describe -t accounts 'account' accts
+}
+
+_aisw() {
+  local -a cmds
+  cmds=(
+    'list:every account: login, plan, state, usage (dashboard)'
+    'add:new account, signed in right away'
+    'login:sign an account in again'
+    'remove:take an account off the list'
+    'activate:make it the current account'
+    'deactivate:no current account'
+    'help:list the commands'
+  )
+  if (( CURRENT == 2 )); then
+    _describe -t commands 'aisw command' cmds
+    return
+  fi
+  case $words[2] in
+    activate|login|remove|rm)
+      (( CURRENT == 3 )) && _aisw_accounts ;;
+    add)
+      if (( CURRENT == 3 )); then
+        local -a tools=('claude:Claude Code' 'codex:Codex' 'agy:Antigravity')
+        _describe -t tools 'tool' tools
+      elif (( CURRENT == 4 )); then
+        _message 'name (optional; default: next free letter)'
+      fi
+      ;;
+  esac
+}
+
+_aisw "$@"

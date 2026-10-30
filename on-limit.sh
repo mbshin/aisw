@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# StopFailure hook (matcher rate_limit): mark this account used up and leave a handoff for aisw.
+# StopFailure hook (matcher rate_limit): mark this account used up and say which account is free next.
 # The hook's output and exit code are ignored by Claude Code, so this only writes files and notifies.
 . "$(dirname "$0")/common.sh"
 
 acct=$(account_name)
-input=$(cat)
+cat >/dev/null  # the hook input isn't needed
 t=$(now)
 
 until=$(blocked_until "$acct")
@@ -15,15 +15,11 @@ if [ -z "$until" ]; then
 fi
 echo "$until" > "$STATE/$acct.limit"
 
-case $acct in
-  a|b|c)
-    jq -n --arg from "$acct" --argjson at "$t" --argjson input "$input" \
-      '{from: $from, at: $at, session_id: $input.session_id, cwd: $input.cwd}' > "$STATE/handoff.json"
-    label=$(tr '[:lower:]' '[:upper:]' <<<"$acct")
-    notify "Account $label hit its limit (resets $(hhmm "$until")). Type /exit to go on in the next account."
-    ;;
-  *)
-    notify "Claude hit its usage limit (resets $(hhmm "$until"))."
-    ;;
-esac
+label=$acct
+[ "$acct" = default ] && label=main
+if next=$(next_free_claude "$acct"); then
+  notify "Account $label hit its limit (resets $(hhmm "$until")). Next free: $next → /exit, aisw activate $next, aisw --continue"
+else
+  notify "Account $label hit its limit (resets $(hhmm "$until")). No other Claude account is free: aisw list"
+fi
 exit 0

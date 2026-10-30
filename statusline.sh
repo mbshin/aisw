@@ -5,8 +5,8 @@
 
 acct=$(account_name)
 input=$(cat)
-label=$(tr '[:lower:]' '[:upper:]' <<<"$acct")
-[ "$acct" = default ] && label=main  # plain `claude` (~/.claude)
+label=$acct
+[ "$acct" = default ] && label=main  # plain `claude` (~/.claude), not an aisw account
 
 if jq -e '.rate_limits.five_hour or .rate_limits.seven_day' >/dev/null 2>&1 <<<"$input"; then
   jq '.rate_limits | {five_hour, seven_day}' <<<"$input" > "$STATE/$acct.usage.json"
