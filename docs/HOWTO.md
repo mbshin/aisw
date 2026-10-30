@@ -1,6 +1,6 @@
-# clsw how-to
+# aisw how-to
 
-Step-by-step guides. For what clsw is, see the [README](../README.md).
+Step-by-step guides. For what aisw is, see the [README](../README.md).
 
 | # | Guide |
 |---|---|
@@ -14,17 +14,18 @@ Step-by-step guides. For what clsw is, see the [README](../README.md).
 | 8 | [Try a switch without waiting for a limit](#8-try-a-switch-without-waiting-for-a-limit) |
 | 9 | [Troubleshooting](#9-troubleshooting) |
 | 10 | [Update and uninstall](#10-update-and-uninstall) |
+| 11 | [Codex fallback](#11-codex-fallback) |
 
 ## 1. Install
 
 ```zsh
-brew install mbshin/tools/clsw
+brew install mbshin/tools/aisw
 ```
 
 This also installs `jq` (used by the scripts) and `uv` (runs the dashboard). Check:
 
 ```zsh
-clsw status
+aisw status
 # A: free (no usage seen yet)
 # B: free (no usage seen yet)
 # C: free (no usage seen yet)
@@ -33,24 +34,24 @@ clsw status
 ## 2. Set up the accounts
 
 ```zsh
-clsw setup
+aisw setup
 ```
 
 | It does | Detail |
 |---|---|
 | Makes `~/.claude-a`, `~/.claude-b`, `~/.claude-c` | One Claude Code config folder per account |
 | Links `projects`, `settings.json`, `skills`, `plugins` in each to `~/.claude` | Shared history, memory, settings |
-| Adds to `~/.claude/settings.json` (backup first) | `statusLine` → clsw's status line; a `StopFailure` hook, matcher `rate_limit` → clsw's limit hook |
+| Adds to `~/.claude/settings.json` (backup first) | `statusLine` → aisw's status line; a `StopFailure` hook, matcher `rate_limit` → aisw's limit hook |
 
 Your existing `~/.claude` login stays as it is; plain Claude Code keeps working.
 
 ## 3. Log in
 
 ```zsh
-clsw login
+aisw login
 ```
 
-For each account that isn't logged in yet, clsw opens the sign-in page in a **new, empty Chrome
+For each account that isn't logged in yet, aisw opens the sign-in page in a **new, empty Chrome
 window** (a throwaway profile). Sign in with the account for that slot and approve; the window closes
 by itself.
 
@@ -61,18 +62,18 @@ by itself.
 Check that the accounts differ:
 
 ```zsh
-clsw who
+aisw who
 # A: you@work.example · Work Inc (Claude Team account)
 # B: you@home.example · personal (Claude Max account)
 # C: you@side.example · Side Co (Claude Team account)
 ```
 
-Wrong account in a slot? `clsw login b` redoes just that one.
+Wrong account in a slot? `aisw login b` redoes just that one.
 
 ## 4. Turn it on
 
 ```zsh
-echo 'alias claude=clsw' >> ~/.zshrc
+echo 'alias claude=aisw' >> ~/.zshrc
 exec zsh
 claude --dry-run     # CLAUDE_CONFIG_DIR=/Users/you/.claude-a claude
 ```
@@ -87,8 +88,8 @@ Inside the wrapper `claude` still means the real Claude Code, so nothing loops.
 | Continue the last conversation | `claude --continue` |
 | A specific account | `claude b`, `claude b --resume` |
 | Which account am I on? | Status line: `A`, or `B · 5h 72% · 7d 40%` |
-| Overview | `clsw status`, `clsw ui` |
-| Without clsw | `command claude` |
+| Overview | `aisw status`, `aisw ui` |
+| Without aisw | `command claude` |
 
 Order of preference is A → B → C: put the account you want to use up first in A.
 
@@ -97,10 +98,10 @@ Order of preference is A → B → C: put the account you want to use up first i
 1. Claude Code shows its usage-limit message; you get a notification:
    *"Account A hit its limit (resets Thu 18:00). Type /exit to go on in the next account."*
 2. Type `/exit`.
-3. clsw prints *"A hit its limit. Going on in B in 3s (Ctrl+C to stop)..."*
+3. aisw prints *"A hit its limit. Going on in B in 3s (Ctrl+C to stop)..."*
 4. B resumes the same conversation and is told to check `git status` / `git diff` and continue.
 
-All used up? clsw stops, prints each reset time and the `--resume` command for later.
+All used up? aisw stops, prints each reset time and the `--resume` command for later.
 
 When the plan reports usage, the status line warns early: ⚠ at 80%, a notification at 90% ("good time to
 commit"), and the account counts as used up at 95% (5h) or 98% (7 days), so the next `claude` starts
@@ -109,7 +110,7 @@ elsewhere before the hard stop.
 ## 7. The dashboard
 
 ```zsh
-clsw ui
+aisw ui
 ```
 
 | Key | Does |
@@ -125,45 +126,62 @@ It refreshes every 5 seconds. Usage gauges appear once an account has sent usage
 ## 8. Try a switch without waiting for a limit
 
 ```zsh
-mkdir -p ~/clsw-trial && cd ~/clsw-trial
-clsw -n clsw-trial                     # Terminal 1: say "remember the word mango"
+mkdir -p ~/aisw-trial && cd ~/aisw-trial
+aisw -n aisw-trial                     # Terminal 1: say "remember the word mango"
 ```
 
 In a second terminal, pretend A just hit its limit in that session:
 
 ```zsh
-clsw test-hit a ~/clsw-trial
+aisw test-hit a ~/aisw-trial
 ```
 
 Back in the session, type `/exit`. It goes on in B; ask *"what word did I ask you to remember?"*.
-Clean up with `clsw ui` → `r` on A, or `rm ~/.clsw/a.limit`.
+Clean up with `aisw ui` → `r` on A, or `rm ~/.aisw/a.limit`.
 
 ## 9. Troubleshooting
 
 | Symptom | Fix |
 |---|---|
-| `clsw who` shows the same account twice | `clsw login <x>` and sign in with the right account |
-| Account wrongly "used up" | `clsw ui` → `r`, or `rm ~/.clsw/<x>.limit` |
-| No switch after `/exit` | Was there a notification? `jq '.hooks.StopFailure' ~/.claude/settings.json` must list clsw's `on-limit.sh` |
+| `aisw who` shows the same account twice | `aisw login <x>` and sign in with the right account |
+| Account wrongly "used up" | `aisw ui` → `r`, or `rm ~/.aisw/<x>.limit` |
+| No switch after `/exit` | Was there a notification? `jq '.hooks.StopFailure' ~/.claude/settings.json` must list aisw's `on-limit.sh` |
 | Session not found on the next account | `ls -l ~/.claude-b/projects` must point to `~/.claude/projects` |
 | Status line shows only `A` | No reply yet in this session, or your plan sends no usage numbers |
-| Everything odd | `rm -rf ~/.clsw` (state only), then `command claude` |
+| Everything odd | `rm -rf ~/.aisw` (state only), then `command claude` |
 
 ## 10. Update and uninstall
 
 ```zsh
-brew upgrade clsw
+brew upgrade aisw
 ```
 
 Uninstall:
 
 ```zsh
-clsw unsetup              # removes the status line + hook (backup first) and the alias line
-brew uninstall clsw
-rm -rf ~/.clsw            # state
+aisw unsetup              # removes the status line + hook (backup first) and the alias line
+brew uninstall aisw
+rm -rf ~/.aisw            # state
 # optional: log out and remove the account folders
 for x in a b c; do CLAUDE_CONFIG_DIR=~/.claude-$x claude auth logout; done
 rm -rf ~/.claude-a ~/.claude-b ~/.claude-c
 ```
 
 Plain `claude` with `~/.claude` worked the whole time and keeps working.
+
+## 11. Codex fallback
+
+```zsh
+brew install codex && codex login     # if you don't have it yet
+aisw setup --codex
+```
+
+| Situation | What happens |
+|---|---|
+| Last free Claude account hits its limit, you type `/exit` | "All Claude accounts are used up. Continue in Codex? [y/N]" |
+| You start `claude` while all are used up | Same question |
+| `aisw codex` | Hand this folder's newest Claude session to Codex now |
+
+The handoff note holds the first request, the last five, Claude's last message and the git state. When a
+Claude account is free again, `aisw resume` brings you back to the Claude conversation; it checks
+`git diff` for what Codex changed. Turn it off with `aisw unsetup --codex`.

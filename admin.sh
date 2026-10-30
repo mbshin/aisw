@@ -1,13 +1,13 @@
-# clsw setup / unsetup / test-hit. Sourced by clsw (needs common.sh and $CLAUDE_BIN), not run.
+# aisw setup / unsetup / test-hit. Sourced by aisw (needs common.sh and $CLAUDE_BIN), not run.
 
 SHARED="projects settings.json skills plugins"
-ALIAS_LINE="alias claude=clsw"
+ALIAS_LINE="alias claude=aisw"
 
 # Where the hooks should point: Homebrew's stable opt/ path, so upgrades don't break settings.json.
 lib_dir() {
   local lib
   lib=$(cd "$(dirname "$0")" && pwd)
-  case $lib in */Cellar/clsw/*/libexec) lib=${lib%%/Cellar/*}/opt/clsw/libexec ;; esac
+  case $lib in */Cellar/aisw/*/libexec) lib=${lib%%/Cellar/*}/opt/aisw/libexec ;; esac
   echo "$lib"
 }
 
@@ -15,6 +15,13 @@ backup() { cp "$1" "$1.bak-$(date +%Y%m%d-%H%M%S)" && echo "  backup: $1.bak-…
 
 do_setup() {
   local lib settings acct n
+  if [ "${1:-}" = --codex ]; then
+    command -v "$CODEX_BIN" >/dev/null || { echo "Install Codex first: brew install codex" >&2; return 1; }
+    echo codex > "$STATE/fallback"
+    echo "Codex fallback on: when every Claude account is used up, aisw offers to go on in Codex."
+    echo "Off again: aisw unsetup --codex"
+    return 0
+  fi
   lib=$(lib_dir)
   settings=$HOME/.claude/settings.json
   mkdir -p "$HOME/.claude/projects" "$HOME/.claude/skills" "$HOME/.claude/plugins"
@@ -41,29 +48,34 @@ do_setup() {
   cat <<EOF
 
 Next:
-  clsw login                       log in to each account
+  aisw login                       log in to each account
   echo '$ALIAS_LINE' >> ~/.zshrc   optional: keep typing \`claude\`
 EOF
 }
 
 do_unsetup() {
   local settings=$HOME/.claude/settings.json rc=$HOME/.zshrc
+  if [ "${1:-}" = --codex ] || [ -f "$STATE/fallback" ]; then
+    rm -f "$STATE/fallback"
+    echo "Codex fallback off."
+    [ "${1:-}" = --codex ] && return 0
+  fi
   if [ -f "$settings" ]; then
     echo "Settings"
     backup "$settings"
     jq '
-      (if (.statusLine.command // "") | endswith("/statusline.sh") and contains("clsw") then del(.statusLine) else . end)
+      (if (.statusLine.command // "") | endswith("/statusline.sh") and (contains("aisw") or contains("clsw")) then del(.statusLine) else . end)
       | if .hooks.StopFailure then
           .hooks.StopFailure |= map(select(([.hooks[]?.command] | any(endswith("/on-limit.sh"))) | not))
           | if .hooks.StopFailure == [] then del(.hooks.StopFailure) else . end
         else . end
     ' "$settings" > "$settings.tmp" && mv "$settings.tmp" "$settings"
-    echo "  removed clsw's status line and limit hook"
+    echo "  removed aisw's status line and limit hook"
   fi
   if [ -f "$rc" ] && grep -qxF "$ALIAS_LINE" "$rc"; then
     echo "~/.zshrc"
     backup "$rc"
-    grep -vxF "$ALIAS_LINE" "$rc" | grep -v '^# clsw: ' > "$rc.tmp" && mv "$rc.tmp" "$rc"
+    grep -vxF "$ALIAS_LINE" "$rc" | grep -v '^# aisw: ' > "$rc.tmp" && mv "$rc.tmp" "$rc"
     echo "  removed '$ALIAS_LINE' (open a new terminal)"
   fi
   cat <<EOF
@@ -74,10 +86,10 @@ Remove them too:  for x in $ACCOUNTS; do CLAUDE_CONFIG_DIR=~/.claude-\$x claude 
 EOF
 }
 
-# clsw test-hit <a|b|c> [dir]: pretend the account just hit its limit in the newest session of dir.
+# aisw test-hit <a|b|c> [dir]: pretend the account just hit its limit in the newest session of dir.
 do_test_hit() {
   local acct=${1:-} dir proj latest sid
-  case $acct in a|b|c) ;; *) echo "usage: clsw test-hit a|b|c [dir]" >&2; return 1 ;; esac
+  case $acct in a|b|c) ;; *) echo "usage: aisw test-hit a|b|c [dir]" >&2; return 1 ;; esac
   dir=$(cd "${2:-$PWD}" && pwd) || return 1
   # Claude Code keeps a folder's sessions in ~/.claude/projects/<path with / and . as ->/<id>.jsonl
   proj=$HOME/.claude/projects/$(tr '/.' '--' <<<"$dir")

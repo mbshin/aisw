@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# StopFailure hook (matcher rate_limit): mark this account used up and leave a handoff for clsw.
+# StopFailure hook (matcher rate_limit): mark this account used up and leave a handoff for aisw.
 # The hook's output and exit code are ignored by Claude Code, so this only writes files and notifies.
 . "$(dirname "$0")/common.sh"
 

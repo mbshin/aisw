@@ -2,21 +2,23 @@
 # Start Claude Code on the first account that is not used up; when that account hits its limit
 # and you /exit, go on with the same conversation on the next free account.
 #
-#   clsw [claude args...]        pick an account (a first)
-#   clsw a|b|c [claude args...]  force an account
-#   clsw help | -h               this list
-#   clsw status                  show all accounts
-#   clsw who                     show who is logged in to each account
-#   clsw login [a|b|c] [args...] log in to one account, or to every account not logged in yet
-#   clsw ui | u                  dashboard of the three accounts (start, login, reset limit)
-#   clsw resume [words]          pick a past conversation (any folder) with fzf, resume it on a free account
-#   clsw setup | unsetup         make the account folders + status line + limit hook / take them out again
-#   clsw test-hit a|b|c [dir]    pretend an account just hit its limit (to try a switch)
-#   clsw --dry-run [...]         print the command instead of running it
+#   aisw [claude args...]        pick an account (a first)
+#   aisw a|b|c [claude args...]  force an account
+#   aisw help | -h               this list
+#   aisw status                  show all accounts
+#   aisw who                     show who is logged in to each account
+#   aisw login [a|b|c] [args...] log in to one account, or to every account not logged in yet
+#   aisw ui | u                  dashboard of the three accounts (start, login, reset limit)
+#   aisw resume [words]          pick a past conversation (any folder) with fzf, resume it on a free account
+#   aisw setup | unsetup         make the account folders + status line + limit hook / take them out again
+#   aisw test-hit a|b|c [dir]    pretend an account just hit its limit (to try a switch)
+#   aisw codex                   hand this folder's newest Claude session to Codex (codex.sh)
+#   aisw --dry-run [...]         print the command instead of running it
 . "$(dirname "$0")/common.sh"
+. "$(dirname "$0")/codex.sh"
 
-CLAUDE_BIN=${CLSW_CLAUDE:-claude}
-WAIT=${CLSW_WAIT:-3}
+CLAUDE_BIN=${AISW_CLAUDE:-claude}
+WAIT=${AISW_WAIT:-3}
 RESUME_PROMPT="The previous turn was cut off by the usage limit and this session moved to another account. \
 Run git status and git diff, check what was half done, then continue the task."
 
@@ -54,8 +56,8 @@ show_who() {
 
 # Close the empty-profile sign-in windows that signin-browser.sh opened, and delete their profiles.
 close_signin_browser() {
-  pkill -f -- '--user-data-dir=.*clsw-login\.' 2>/dev/null || true
-  rm -rf "${TMPDIR:-/tmp}"/clsw-login.*
+  pkill -f -- '--user-data-dir=.*aisw-login\.' 2>/dev/null || true
+  rm -rf "${TMPDIR:-/tmp}"/aisw-login.*
 }
 
 # Email to pre-fill on the sign-in page: the account's current login, else the one saved last time,
@@ -108,7 +110,7 @@ run_ui() {
   result=$(mktemp)
   while :; do
     : > "$result"
-    CLSW_UI_RESULT=$result uv run --quiet --script "$(dirname "$0")/ui.py" || break
+    AISW_UI_RESULT=$result uv run --quiet --script "$(dirname "$0")/ui.py" || break
     choice=$(cat "$result")
     case $choice in
       "start "[abc]) rm -f "$result"; exec "$0" "${choice#start }" ;;
@@ -136,7 +138,7 @@ list_sessions() {
 }
 
 pick_session() {
-  local fzf=${CLSW_FZF:-fzf} line f cwd
+  local fzf=${AISW_FZF:-fzf} line f cwd
   line=$(list_sessions | "$fzf" --delimiter='\t' --with-nth=3 --no-sort --query="$*" \
     --prompt='resume> ' --header='enter: resume on the first free account · esc: cancel' \
     --preview="jq -r 'select(.type == \"user\" and (.isMeta | not)) | .message.content | strings
@@ -148,27 +150,32 @@ pick_session() {
 
 show_help() {
   cat <<'EOF2'
-clsw: keep Claude Code going on your next account when one hits its usage limit
+aisw (AI switch): keep coding when an AI agent hits its usage limit: next Claude account, then Codex
 
-Start Claude (with `alias claude=clsw`, type claude instead of clsw):
-  clsw                       first free account, A → B → C
-  clsw a|b|c                 force an account
-  clsw --continue, --resume  any Claude Code option passes through
-  clsw --dry-run             print which account would start
+Start Claude (with `alias claude=aisw`, type claude instead of aisw):
+  aisw                       first free account, A → B → C
+  aisw a|b|c                 force an account
+  aisw --continue, --resume  any Claude Code option passes through
+  aisw --dry-run             print which account would start
 
 Accounts:
-  clsw who                   login, owner and plan of each account
-  clsw status                free, or used up until when (with usage %)
-  clsw ui                    dashboard (←→ select, enter start, l login, r reset, q quit)
-  clsw resume [words]        find any past conversation with fzf and resume it
-  clsw login [a|b|c]         log in (empty browser window, email pre-filled)
+  aisw who                   login, owner and plan of each account
+  aisw status                free, or used up until when (with usage %)
+  aisw ui                    dashboard (←→ select, enter start, l login, r reset, q quit)
+  aisw resume [words]        find any past conversation with fzf and resume it
+  aisw login [a|b|c]         log in (empty browser window, email pre-filled)
 
 Setup and testing:
-  clsw setup | unsetup       add / remove account folders, status line and limit hook
-  clsw test-hit a|b|c [dir]  pretend an account just hit its limit
+  aisw setup | unsetup       add / remove account folders, status line and limit hook
+  aisw setup --codex         turn the Codex fallback on (unsetup --codex: off)
+  aisw test-hit a|b|c [dir]  pretend an account just hit its limit
+
+Codex fallback (opt-in: aisw setup --codex):
+  all Claude accounts used up → asks "Continue in Codex? [y/N]" with a handoff note
+  aisw codex                 hand this folder's newest Claude session to Codex now
 
 When a limit is hit: wait for the notification, type /exit, it goes on in the next account.
-Claude Code's own help: claude --help (or command claude --help). Docs: github.com/mbshin/clsw
+Claude Code's own help: claude --help (or command claude --help). Docs: github.com/mbshin/aisw
 EOF2
 }
 
@@ -177,19 +184,21 @@ if [ "${1:-}" = --dry-run ]; then dry=1; shift; fi
 case ${1:-} in
   help|-h) show_help; exit 0 ;;
   status) show_status; exit 0 ;;
-  who) show_who; exit 0 ;;
+  who) show_who; codex_who; exit 0 ;;
+  codex) shift; go_codex "$(newest_session_in "$PWD")" "$PWD"; exit ;;
   login) shift; do_login "$@"; exit ;;
   ui|u) run_ui; exit ;;
   resume) shift; pick_session "$@"; exit ;;
-  setup) . "$(dirname "$0")/admin.sh"; do_setup; exit ;;
-  unsetup) . "$(dirname "$0")/admin.sh"; do_unsetup; exit ;;
+  setup) shift; . "$(dirname "$0")/admin.sh"; do_setup "$@"; exit ;;
+  unsetup) shift; . "$(dirname "$0")/admin.sh"; do_unsetup "$@"; exit ;;
   test-hit) shift; . "$(dirname "$0")/admin.sh"; do_test_hit "$@"; exit ;;
   a|b|c) acct=$1; shift ;;
   *)
     acct=$(pick_account) || {
       echo "All accounts are at their limit:" >&2
       show_status >&2
-      echo "Force one with: clsw a|b|c" >&2
+      offer_codex "$(newest_session_in "$PWD")" "$PWD" && exit 0
+      echo "Force one with: aisw a|b|c" >&2
       exit 1
     }
     ;;
@@ -198,7 +207,7 @@ esac
 while :; do
   dir=$HOME/.claude-$acct
   if [ ! -d "$dir" ]; then
-    echo "Missing $dir: run clsw setup." >&2
+    echo "Missing $dir: run aisw setup." >&2
     exit 1
   fi
   if [ "$dry" = 1 ]; then
@@ -219,7 +228,8 @@ while :; do
   next=$(pick_account) || {
     echo "All accounts are at their limit:" >&2
     show_status >&2
-    echo "Resume later with: clsw --resume $sid" >&2
+    offer_codex "$(session_file "$sid")" "$cwd" && exit 0
+    echo "Resume later with: aisw --resume $sid" >&2
     exit $code
   }
   echo "$(upper "$acct") hit its limit. Going on in $(upper "$next") in ${WAIT}s (Ctrl+C to stop)..."

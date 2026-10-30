@@ -3,11 +3,11 @@
 # requires-python = ">=3.11"
 # dependencies = ["textual>=8.0"]
 # ///
-"""clsw ui: one screen for the three Claude accounts.
+"""aisw ui: one screen for the three Claude accounts.
 
-Reads the same things as `clsw who` and `clsw status`; never reads login tokens. Enter and `l` need the
+Reads the same things as `aisw who` and `aisw status`; never reads login tokens. Enter and `l` need the
 whole terminal, so the TUI quits and writes "start <x>" or "login <x>" to the file named by
-CLSW_UI_RESULT; the clsw wrapper runs it.
+AISW_UI_RESULT; the aisw wrapper runs it.
 """
 
 import json
@@ -148,7 +148,7 @@ class Confirm(ModalScreen[bool]):
         self.dismiss(event.button.id == "yes")
 
 
-class ClswUI(App):
+class AiswUI(App):
     ENABLE_COMMAND_PALETTE = False
     CSS = """
     Screen { background: $background; }
@@ -188,7 +188,7 @@ class ClswUI(App):
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="top"):
-            yield Static("clsw", id="name")
+            yield Static("aisw", id="name")
             yield Static("", id="clock")
         with Grid(id="cards"):
             for acct in ACCOUNTS:
@@ -263,11 +263,11 @@ class ClswUI(App):
 
 def main() -> None:
     home = Path.home()
-    state = Path(os.environ.get("CLSW_STATE", home / ".clsw"))
+    state = Path(os.environ.get("AISW_STATE", home / ".aisw"))
     state.mkdir(parents=True, exist_ok=True)
-    result = os.environ.get("CLSW_UI_RESULT")
-    claude = os.environ.get("CLSW_CLAUDE", "claude")
-    ClswUI(home, state, claude, Path(result) if result else None).run()
+    result = os.environ.get("AISW_UI_RESULT")
+    claude = os.environ.get("AISW_CLAUDE", "claude")
+    AiswUI(home, state, claude, Path(result) if result else None).run()
 
 
 if __name__ == "__main__":

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Claude Code status line: shows the account and its usage, and records the usage for clsw.
+# Claude Code status line: shows the account and its usage, and records the usage for aisw.
 # rate_limits is only sent to Pro/Max subscribers; without it this shows the account only.
 . "$(dirname "$0")/common.sh"
 

@@ -1,7 +1,9 @@
-# Shared by statusline.sh, on-limit.sh and clsw. Sourced, not run.
-# State lives in ~/.clsw (CLSW_STATE overrides it, for tests).
+# Shared by statusline.sh, on-limit.sh and aisw. Sourced, not run.
+# State lives in ~/.aisw (AISW_STATE overrides it, for tests).
 
-STATE=${CLSW_STATE:-$HOME/.clsw}
+STATE=${AISW_STATE:-$HOME/.aisw}
+# Renamed from clsw (1.1.0): keep the old state.
+if [ -z "${AISW_STATE:-}" ] && [ -d "$HOME/.clsw" ] && [ ! -e "$STATE" ]; then mv "$HOME/.clsw" "$STATE"; fi
 ACCOUNTS="a b c"
 FIVE_FULL=95   # an account is used up at 5h >= 95% ...
 SEVEN_FULL=98  # ... or 7d >= 98%
@@ -28,7 +30,7 @@ now() { date +%s; }
 hhmm() { date -r "$1" '+%a %H:%M' 2>/dev/null || date -d "@$1" '+%a %H:%M'; }
 
 notify() {
-  [ "${CLSW_QUIET:-}" = 1 ] && return 0
+  [ "${AISW_QUIET:-}" = 1 ] && return 0
   osascript -e "display notification \"$1\" with title \"Claude\"" >/dev/null 2>&1 || true
 }
 

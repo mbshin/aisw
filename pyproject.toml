@@ -1,6 +1,6 @@
-# Only for the tests; clsw itself is bash plus ui.py (run by `uv run --script`).
+# Only for the tests; aisw itself is bash plus ui.py (run by `uv run --script`).
 [project]
-name = "clsw-tests"
+name = "aisw-tests"
 version = "0"
 requires-python = ">=3.11"
 

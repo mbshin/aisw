@@ -12,12 +12,12 @@ repo=$(cd "$(dirname "$0")" && pwd)
 git -C "$repo" tag "v$version"
 git -C "$repo" push origin main "v$version"
 
-url=https://github.com/mbshin/clsw/archive/refs/tags/v$version.tar.gz
+url=https://github.com/mbshin/aisw/archive/refs/tags/v$version.tar.gz
 sha=$(curl -fsSL "$url" | shasum -a 256 | cut -d' ' -f1)
 mkdir -p "$tap/Formula"
-sed -e "s/@VERSION@/$version/g" -e "s/@SHA256@/$sha/" "$repo/clsw.rb" > "$tap/Formula/clsw.rb"
-git -C "$tap" add Formula/clsw.rb
-git -C "$tap" commit -qm "clsw $version"
+sed -e "s/@VERSION@/$version/g" -e "s/@SHA256@/$sha/" "$repo/aisw.rb" > "$tap/Formula/aisw.rb"
+git -C "$tap" add Formula/aisw.rb
+git -C "$tap" commit -qm "aisw $version"
 git -C "$tap" push origin HEAD
 
-echo "Released v$version. Users: brew upgrade clsw"
+echo "Released v$version. Users: brew upgrade aisw"

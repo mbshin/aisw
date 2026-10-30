@@ -1,4 +1,4 @@
-"""ui.py: the clsw ui dashboard, driven with Textual's test pilot."""
+"""ui.py: the aisw ui dashboard, driven with Textual's test pilot."""
 
 import asyncio
 import importlib.util
@@ -11,7 +11,7 @@ import pytest
 pytest.importorskip("textual")
 
 UI = Path(__file__).resolve().parent.parent / "ui.py"
-spec = importlib.util.spec_from_file_location("clsw_ui", UI)
+spec = importlib.util.spec_from_file_location("aisw_ui", UI)
 ui = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ui)
 
@@ -62,7 +62,7 @@ def test_gauge_and_countdown():
 
 def run_app(home, state, claude, result, keys, check=None):
     async def go():
-        app = ui.ClswUI(home, state, claude, result)
+        app = ui.AiswUI(home, state, claude, result)
         async with app.run_test() as pilot:
             await app.workers.wait_for_complete()
             await pilot.pause()
