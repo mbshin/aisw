@@ -168,7 +168,7 @@ fallback_who() {
 # browser window as Claude logins, so the browser's current ChatGPT login is not reused.
 # If ChatGPT blocks device codes for the account, falls back to the normal browser login.
 codex_login() {
-  local tool=${1:-codex} out pid url code rc i
+  local tool=${1:-codex} out pid url code rc i blocked
   tool_missing "$tool" && return 1
   out=$(mktemp "${TMPDIR:-/tmp}/aisw-codex-login.XXXXXX")
   with_tool "$tool" "$CODEX_BIN" login --device-auth > "$out" 2>&1 &
@@ -183,10 +183,21 @@ codex_login() {
   if [ -n "$url" ] && [ -n "$code" ]; then
     echo "== $(tool_label "$tool"): sign in with your ChatGPT account in the new browser window"
     echo "   One-time code: $code   (expires in 15 minutes)"
+    echo "   If the page says device code sign-in is off, press Ctrl+C: aisw switches to the browser login."
     "$BROWSER" "$url"
+    # The "device code sign-in is off" message shows on the web page, not here, so Ctrl+C is the way out.
+    blocked=
+    trap 'blocked=1; kill "$pid" 2>/dev/null' INT
     wait "$pid"
     rc=$?
+    trap - INT
     close_signin_browser
+    if [ -n "$blocked" ]; then
+      wait "$pid" 2>/dev/null
+      echo
+      echo "device code sign-in" >> "$out" # take the fallback below
+      rc=1
+    fi
   else
     kill "$pid" 2>/dev/null
     wait "$pid" 2>/dev/null

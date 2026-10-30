@@ -855,6 +855,7 @@ fi
 if [ "$1 $2" = "login --device-auth" ]; then
   printf 'Follow these steps\\n1. Open this link\\n   \\033[94mhttps://auth.openai.com/codex/device\\033[0m\\n'
   printf '2. Enter this one-time code\\n   \\033[1mAB12-CD34E\\033[0m\\n'
+  if [ -n "${CODEX_DEVICE_HANG:-}" ]; then sleep 30; exit 1; fi
   sleep 0.5
   touch "$HOME/codex-logged-in"
   exit "${CODEX_LOGIN_EXIT:-0}"
@@ -1130,3 +1131,29 @@ def test_setup_and_unsetup_codex2(home, slot_codex):
     assert (home / "state" / "fallback").read_text().split() == ["codex2"]
     run_fb(home, "unsetup", "--codex2", codex=slot_codex)
     assert not (home / "state" / "fallback").exists()
+
+
+def test_ctrl_c_while_waiting_for_the_code_switches_to_browser_login(home, device_codex):
+    import signal
+    import time as _time
+
+    fake, browser = device_codex
+    env = {
+        "PATH": os.environ["PATH"], "HOME": str(home), "AISW_STATE": str(home / "state"),
+        "AISW_CLAUDE": str(home / "fake-claude"), "AISW_QUIET": "1", "AISW_CODEX": str(fake),
+        "AISW_BROWSER": str(browser), "TMPDIR": str(home), "CODEX_DEVICE_HANG": "1",
+    }
+    proc = subprocess.Popen(
+        [str(TOOL / "aisw"), "login", "codex"], env=env, cwd=home, text=True,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+    )
+    deadline = _time.time() + 10
+    while not (home / "browser-urls").exists() and _time.time() < deadline:
+        _time.sleep(0.1)
+    _time.sleep(0.3)
+    proc.send_signal(signal.SIGINT)
+    out, err = proc.communicate(timeout=20)
+    assert proc.returncode == 0, err
+    assert "press Ctrl+C" in out and "Falling back" in out
+    assert (home / "codex-browser-login").exists()
+    assert "Codex (fallback): Logged in using ChatGPT" in out

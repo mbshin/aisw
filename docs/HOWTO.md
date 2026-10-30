@@ -52,7 +52,8 @@ aisw login codex                                # one-time code shown in Termina
 
 Needs a ChatGPT plan. The code sign-in must be allowed once: chatgpt.com → profile → **Settings →
 Security** → turn on **device code sign-in** (on a Business/Enterprise workspace only the admin can).
-If it's off, `aisw login codex` says so and falls back to the normal browser login.
+If it's off, the **web page** says so after you enter the code: press **Ctrl+C** in Terminal and aisw
+switches to the normal browser login (no setting needed).
 
 More than one ChatGPT account? `aisw login codex2` (and `codex3` …) logs each into its own folder
 (`~/.codex-2`, via `CODEX_HOME`); they appear as "Codex 2" … in `aisw who` and in the menu. `aisw codex2`
