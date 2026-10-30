@@ -1,0 +1,202 @@
+#!/usr/bin/env bash
+# Start Claude Code on the first account that is not used up; when that account hits its limit
+# and you /exit, go on with the same conversation on the next free account.
+#
+#   clsw [claude args...]        pick an account (a first)
+#   clsw a|b|c [claude args...]  force an account
+#   clsw status                  show all accounts
+#   clsw who                     show who is logged in to each account
+#   clsw login [a|b|c] [args...] log in to one account, or to every account not logged in yet
+#   clsw ui | u                  dashboard of the three accounts (start, login, reset limit)
+#   clsw resume [words]          pick a past conversation (any folder) with fzf, resume it on a free account
+#   clsw setup | unsetup         make the account folders + status line + limit hook / take them out again
+#   clsw test-hit a|b|c [dir]    pretend an account just hit its limit (to try a switch)
+#   clsw --dry-run [...]         print the command instead of running it
+. "$(dirname "$0")/common.sh"
+
+CLAUDE_BIN=${CLSW_CLAUDE:-claude}
+WAIT=${CLSW_WAIT:-3}
+RESUME_PROMPT="The previous turn was cut off by the usage limit and this session moved to another account. \
+Run git status and git diff, check what was half done, then continue the task."
+
+upper() { tr '[:lower:]' '[:upper:]' <<<"$1"; }
+
+show_status() {
+  local acct until
+  for acct in $ACCOUNTS; do
+    until=$(blocked_until "$acct")
+    if [ -n "$until" ]; then
+      echo "$(upper "$acct"): used up until $(hhmm "$until")"
+    elif [ -f "$STATE/$acct.usage.json" ]; then
+      echo "$(upper "$acct"): free ($(jq -r '"5h \(.five_hour.used_percentage // "?")% · 7d \(.seven_day.used_percentage // "?")%"' "$STATE/$acct.usage.json"))"
+    else
+      echo "$(upper "$acct"): free (no usage seen yet)"
+    fi
+  done
+}
+
+# One line per account: "A: someone@example.com · Example Inc (Claude Team account)" or "A: not logged in".
+# A personal plan's organization is named "<email>'s Organization"; shown as "personal".
+show_who() {
+  local acct out org
+  for acct in $ACCOUNTS; do
+    out=$(CLAUDE_CONFIG_DIR=$HOME/.claude-$acct "$CLAUDE_BIN" auth status --text 2>&1)
+    if grep -q '^Email:' <<<"$out"; then
+      org=$(sed -n 's/^Organization: //p' <<<"$out")
+      case $org in *"'s Organization") org=personal ;; esac
+      echo "$(upper "$acct"): $(sed -n 's/^Email: //p' <<<"$out")${org:+ · $org} ($(sed -n 's/^Login method: //p' <<<"$out"))"
+    else
+      echo "$(upper "$acct"): not logged in"
+    fi
+  done
+}
+
+# Close the empty-profile sign-in windows that signin-browser.sh opened, and delete their profiles.
+close_signin_browser() {
+  pkill -f -- '--user-data-dir=.*clsw-login\.' 2>/dev/null || true
+  rm -rf "${TMPDIR:-/tmp}"/clsw-login.*
+}
+
+# Email to pre-fill on the sign-in page: the account's current login, else the one saved last time,
+# else asked once. Kept in $STATE/<x>.email on this Mac only.
+login_email() {
+  local acct=$1 email
+  email=$(CLAUDE_CONFIG_DIR=$HOME/.claude-$acct "$CLAUDE_BIN" auth status --text 2>/dev/null | sed -n 's/^Email: //p')
+  [ -n "$email" ] || email=$(cat "$STATE/$acct.email" 2>/dev/null)
+  if [ -z "$email" ] && [ -t 0 ]; then read -rp "Email for account $(upper "$acct") (Enter to skip): " email; fi
+  echo "$email"
+}
+
+# login_one <a|b|c> [claude auth login args...]: without args, pre-fills the email from login_email.
+login_one() {
+  local acct=$1 email code
+  shift
+  if [ $# -eq 0 ]; then
+    email=$(login_email "$acct")
+    if [ -n "$email" ]; then set -- --email "$email"; fi
+  fi
+  echo "== Account $(upper "$acct")${email:+ ($email)}: sign in in the new browser window"
+  CLAUDE_CONFIG_DIR=$HOME/.claude-$acct "$CLAUDE_BIN" auth login "$@"
+  code=$?
+  close_signin_browser
+  email=$(CLAUDE_CONFIG_DIR=$HOME/.claude-$acct "$CLAUDE_BIN" auth status --text 2>/dev/null | sed -n 's/^Email: //p')
+  if [ -n "$email" ]; then echo "$email" > "$STATE/$acct.email"; fi
+  return $code
+}
+
+do_login() {
+  local acct
+  # The sign-in page opens in an empty browser profile, so no existing Claude login is reused.
+  export BROWSER
+  BROWSER="$(dirname "$0")/signin-browser.sh"
+  case ${1:-} in
+    a|b|c) login_one "$@" ;;
+    *)
+      for acct in $ACCOUNTS; do
+        show_who | grep -q "^$(upper "$acct"): not logged in" || continue
+        login_one "$acct" || return 1
+      done
+      ;;
+  esac
+  show_who
+}
+
+# The TUI quits to start or log in (both need the whole terminal) and leaves "start a" / "login b" in a file.
+run_ui() {
+  local result choice
+  result=$(mktemp)
+  while :; do
+    : > "$result"
+    CLSW_UI_RESULT=$result uv run --quiet --script "$(dirname "$0")/ui.py" || break
+    choice=$(cat "$result")
+    case $choice in
+      "start "[abc]) rm -f "$result"; exec "$0" "${choice#start }" ;;
+      "login "[abc]) do_login "${choice#login }" ;;
+      *) break ;;
+    esac
+  done
+  rm -f "$result"
+}
+
+# First real thing the user typed in a session file (skips meta lines and <command…> wrappers).
+FIRST_MESSAGE='first(inputs | select(.type == "user" and (.isMeta | not)) | .message.content
+  | if type == "string" then . else (map(select(.type == "text").text) | first // empty) end
+  | select(startswith("<") | not)) | gsub("\\s+"; " ") | .[0:100]'
+
+list_sessions() {
+  local f cwd msg
+  ls -t "$HOME"/.claude/projects/*/*.jsonl 2>/dev/null | head -300 | while read -r f; do
+    cwd=$(jq -nr 'first(inputs | .cwd // empty)' "$f" 2>/dev/null)
+    [ -n "$cwd" ] || continue
+    msg=$(jq -nr "$FIRST_MESSAGE" "$f" 2>/dev/null)
+    printf '%s\t%s\t%-16s  %-28s  %s\n' "$f" "$cwd" "$(date -r "$f" '+%a %m-%d %H:%M')" \
+      "${cwd/#$HOME/~}" "${msg:-(no message)}"
+  done
+}
+
+pick_session() {
+  local fzf=${CLSW_FZF:-fzf} line f cwd
+  line=$(list_sessions | "$fzf" --delimiter='\t' --with-nth=3 --no-sort --query="$*" \
+    --prompt='resume> ' --header='enter: resume on the first free account · esc: cancel' \
+    --preview="jq -r 'select(.type == \"user\" and (.isMeta | not)) | .message.content | strings
+      | select(startswith(\"<\") | not)' {1} | head -40" --preview-window=down,40%,wrap) || return 1
+  f=$(cut -f1 <<<"$line"); cwd=$(cut -f2 <<<"$line")
+  cd "$cwd" || { echo "Folder is gone: $cwd" >&2; return 1; }
+  exec "$0" --resume "$(basename "$f" .jsonl)"
+}
+
+dry=0
+if [ "${1:-}" = --dry-run ]; then dry=1; shift; fi
+case ${1:-} in
+  status) show_status; exit 0 ;;
+  who) show_who; exit 0 ;;
+  login) shift; do_login "$@"; exit ;;
+  ui|u) run_ui; exit ;;
+  resume) shift; pick_session "$@"; exit ;;
+  setup) . "$(dirname "$0")/admin.sh"; do_setup; exit ;;
+  unsetup) . "$(dirname "$0")/admin.sh"; do_unsetup; exit ;;
+  test-hit) shift; . "$(dirname "$0")/admin.sh"; do_test_hit "$@"; exit ;;
+  a|b|c) acct=$1; shift ;;
+  *)
+    acct=$(pick_account) || {
+      echo "All accounts are at their limit:" >&2
+      show_status >&2
+      echo "Force one with: clsw a|b|c" >&2
+      exit 1
+    }
+    ;;
+esac
+
+while :; do
+  dir=$HOME/.claude-$acct
+  if [ ! -d "$dir" ]; then
+    echo "Missing $dir: run clsw setup." >&2
+    exit 1
+  fi
+  if [ "$dry" = 1 ]; then
+    echo "CLAUDE_CONFIG_DIR=$dir $CLAUDE_BIN $*"
+    exit 0
+  fi
+
+  started=$(now)
+  CLAUDE_CONFIG_DIR=$dir "$CLAUDE_BIN" "$@"
+  code=$?
+
+  # Go on only when this run's account left a handoff (on-limit.sh) during this run.
+  [ -f "$STATE/handoff.json" ] || exit $code
+  read -r from at sid cwd < <(jq -r '[.from, .at, .session_id, .cwd] | @tsv' "$STATE/handoff.json")
+  rm -f "$STATE/handoff.json"
+  if [ "$from" != "$acct" ] || [ "$at" -lt "$started" ]; then exit $code; fi
+
+  next=$(pick_account) || {
+    echo "All accounts are at their limit:" >&2
+    show_status >&2
+    echo "Resume later with: clsw --resume $sid" >&2
+    exit $code
+  }
+  echo "$(upper "$acct") hit its limit. Going on in $(upper "$next") in ${WAIT}s (Ctrl+C to stop)..."
+  sleep "$WAIT" || exit $code
+  cd "$cwd" || exit 1
+  acct=$next
+  set -- --resume "$sid" "$RESUME_PROMPT"
+done

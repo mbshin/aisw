@@ -1,0 +1,15 @@
+# Only for the tests; clsw itself is bash plus ui.py (run by `uv run --script`).
+[project]
+name = "clsw-tests"
+version = "0"
+requires-python = ">=3.11"
+
+[dependency-groups]
+dev = ["pytest>=8", "textual>=8.0", "ruff>=0.6"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 120
