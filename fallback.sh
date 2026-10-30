@@ -164,10 +164,22 @@ fallback_who() {
   done
 }
 
-# aisw login codex: device-code sign-in (link + one-time code), the link opened in the same empty
-# browser window as Claude logins, so the browser's current ChatGPT login is not reused.
-# If ChatGPT blocks device codes for the account, falls back to the normal browser login.
+# Device-code sign-in (link + one-time code), the link opened in the same empty browser window as
+# Claude logins. If ChatGPT blocks device codes for the account, falls back to the normal browser login.
+# Default: Codex's own browser login (works for every account). `aisw login codex --device` uses the
+# one-time code instead (needs ChatGPT Settings → Security → device code sign-in).
 codex_login() {
+  local tool=${1:-codex}
+  tool_missing "$tool" && return 1
+  if [ "${2:-}" = --device ]; then
+    codex_device_login "$tool"
+    return
+  fi
+  echo "== $(tool_label "$tool"): sign in with your ChatGPT account in the browser"
+  with_tool "$tool" "$CODEX_BIN" login
+}
+
+codex_device_login() {
   local tool=${1:-codex} out pid url code rc i blocked
   tool_missing "$tool" && return 1
   out=$(mktemp "${TMPDIR:-/tmp}/aisw-codex-login.XXXXXX")

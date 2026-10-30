@@ -47,13 +47,13 @@ them in with aisw in step 3, not with `claude` itself.
 
 ```zsh
 brew install --cask codex
-aisw login codex                                # one-time code shown in Terminal; also turns on the fallback
+aisw login codex                                # ChatGPT sign-in in the browser; also turns on the fallback
 ```
 
-Needs a ChatGPT plan. The code sign-in must be allowed once: chatgpt.com → profile → **Settings →
-Security** → turn on **device code sign-in** (on a Business/Enterprise workspace only the admin can).
-If it's off, the **web page** says so after you enter the code: press **Ctrl+C** in Terminal and aisw
-switches to the normal browser login (no setting needed).
+Needs a ChatGPT plan. `aisw login codex --device` signs in with a one-time code instead (handy over SSH);
+ChatGPT must allow it once: chatgpt.com → profile → **Settings → Security** → **device code sign-in** (on a
+Business/Enterprise workspace only the admin can). If the page says it's off, press **Ctrl+C** in Terminal
+and aisw switches to the browser login.
 
 More than one ChatGPT account? `aisw login codex2` (and `codex3` …) logs each into its own folder
 (`~/.codex-2`, via `CODEX_HOME`); they appear as "Codex 2" … in `aisw who` and in the menu. `aisw codex2`

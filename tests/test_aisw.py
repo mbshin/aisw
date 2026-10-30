@@ -878,7 +878,7 @@ def device_codex(home):
     return fake, browser
 
 
-def run_codex_login(home, device_codex, extra_env=None):
+def run_codex_login(home, device_codex, extra_env=None, device=True):
     fake, browser = device_codex
     env = {
         "PATH": os.environ["PATH"], "HOME": str(home), "AISW_STATE": str(home / "state"),
@@ -886,7 +886,8 @@ def run_codex_login(home, device_codex, extra_env=None):
         "AISW_BROWSER": str(browser), "TMPDIR": str(home), **(extra_env or {}),
     }
     return subprocess.run(
-        [str(TOOL / "aisw"), "login", "codex"], env=env, capture_output=True, text=True, cwd=home, check=False
+        [str(TOOL / "aisw"), "login", "codex", *(device and ["--device"] or [])],
+        env=env, capture_output=True, text=True, cwd=home, check=False,
     )
 
 
@@ -1093,7 +1094,7 @@ def slot_codex(home):
 def test_codex2_logs_in_to_its_own_folder_and_becomes_a_fallback(home, slot_codex):
     (home / ".codex").mkdir()
     (home / ".codex" / "auth.json").write_text("{}")
-    out = run_fb(home, "login", "codex2", codex=slot_codex)
+    out = run_fb(home, "login", "codex2", "--device", codex=slot_codex)
     assert out.returncode == 0, out.stderr
     assert (home / ".codex-2" / "auth.json").exists()
     assert "Codex 2 added as a fallback" in out.stdout
@@ -1144,7 +1145,7 @@ def test_ctrl_c_while_waiting_for_the_code_switches_to_browser_login(home, devic
         "AISW_BROWSER": str(browser), "TMPDIR": str(home), "CODEX_DEVICE_HANG": "1",
     }
     proc = subprocess.Popen(
-        [str(TOOL / "aisw"), "login", "codex"], env=env, cwd=home, text=True,
+        [str(TOOL / "aisw"), "login", "codex", "--device"], env=env, cwd=home, text=True,
         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
     )
     deadline = _time.time() + 10
@@ -1157,3 +1158,17 @@ def test_ctrl_c_while_waiting_for_the_code_switches_to_browser_login(home, devic
     assert "press Ctrl+C" in out and "Falling back" in out
     assert (home / "codex-browser-login").exists()
     assert "Codex (fallback): Logged in using ChatGPT" in out
+
+
+def test_login_codex_default_is_the_browser_login(home, device_codex):
+    out = run_codex_login(home, device_codex, device=False)
+    assert out.returncode == 0, out.stderr
+    assert (home / "codex-browser-login").exists()
+    assert not (home / "browser-urls").exists()  # no device-code page
+    assert "Codex added as a fallback" in out.stdout or "Codex (fallback): Logged in" in out.stdout
+
+
+def test_login_codex2_default_browser_login_uses_its_folder(home, slot_codex):
+    out = run_fb(home, "login", "codex2", codex=slot_codex)
+    assert out.returncode == 0, out.stderr
+    assert (home / ".codex-2" / "auth.json").exists()

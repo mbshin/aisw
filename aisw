@@ -99,7 +99,7 @@ do_login() {
   case ${1:-} in
     codex|codex[1-9]|agy)
       # One step: a successful login also puts the tool on the fallback list (off: aisw unsetup --codex|--agy).
-      if "$(tool_base "$1")_login" "$1" && fallback_logged_in "$1"; then
+      if "$(tool_base "$1")_login" "$1" "${2:-}" && fallback_logged_in "$1"; then
         fallback_enabled "$1" || { fallback_add "$1"; echo "$(tool_label "$1") added as a fallback (off: aisw unsetup --$1)."; }
       else
         code=1
@@ -186,7 +186,8 @@ Accounts:
   aisw ui (or aisw)          dashboard (←→ select, enter start, l login, r reset, q quit)
   aisw resume [words]        find any past conversation with fzf and resume it
   aisw login [a|b|c]         log in a Claude account (empty browser window, email pre-filled)
-  aisw login codex | agy     log in Codex / Antigravity; that also makes it a fallback
+  aisw login codex | agy     log in Codex (browser) / Antigravity; that also makes it a fallback
+  aisw login codex --device  Codex with a one-time code instead (ChatGPT must allow device code sign-in)
   aisw login codex2          a 2nd Codex account (own folder ~/.codex-2; codex3 … too)
 
 Setup and testing:
