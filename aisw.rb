@@ -23,7 +23,7 @@ class Aisw < Formula
         aisw setup
         aisw login
       Optional, to keep typing `claude`:
-        echo 'alias claude=aisw' >> ~/.zshrc
+        echo "alias claude='aisw claude'" >> ~/.zshrc
     EOS
   end
 

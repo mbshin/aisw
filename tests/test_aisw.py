@@ -48,7 +48,7 @@ def home(tmp_path):
     return tmp_path
 
 
-def run(home, script, *args, stdin="", account=None, tmpdir=None, fzf=None, codex=None):
+def run(home, script, *args, stdin="", account=None, tmpdir=None, fzf=None, codex=None, ui=None):
     env = {
         "PATH": os.environ["PATH"],
         "HOME": str(home),
@@ -64,6 +64,8 @@ def run(home, script, *args, stdin="", account=None, tmpdir=None, fzf=None, code
         env["AISW_FZF"] = str(fzf)
     if codex:
         env["AISW_CODEX"] = str(codex)
+    if ui:
+        env["AISW_UI"] = str(ui)
     if account:
         env["CLAUDE_CONFIG_DIR"] = str(home / f".claude-{account}")
     return subprocess.run(
@@ -130,7 +132,7 @@ def test_a_and_b_used_up_starts_c(home):
 def test_limit_hit_on_b_moves_to_c_when_a_is_used_up(home):
     block(home, "a")
     (home / "hits").write_text("b\n")
-    out = run(home, "aisw")
+    out = run(home, "aisw", "claude")
     assert out.returncode == 0, out.stderr
     calls = (home / "calls.log").read_text().splitlines()
     assert calls[0] == f".claude-b {home} "
@@ -147,9 +149,10 @@ def test_limit_hit_on_b_goes_back_to_a_when_free(home):
 
 def test_all_used_up_stops_with_reset_times(home):
     block(home, "a", "b", "c")
-    out = run(home, "aisw")
+    out = run(home, "aisw", "claude")
     assert out.returncode == 1
     assert "All accounts are at their limit" in out.stderr
+    assert "aisw claude a|b|c" in out.stderr
     for label in "ABC":
         assert f"{label}: used up until" in out.stderr
     assert not (home / "calls.log").exists()
@@ -277,11 +280,27 @@ def test_setup_then_unsetup(home):
     run(home, "aisw", "setup")  # twice: still one limit hook
     assert len(json.loads((claude_dir / "settings.json").read_text())["hooks"]["StopFailure"]) == 2
 
-    (home / ".zshrc").write_text("export A=1\n# aisw: three Claude accounts\nalias claude=aisw\n")
+    (home / ".zshrc").write_text("export A=1\n# aisw: three Claude accounts\nalias claude='aisw claude'\n")
     out = run(home, "aisw", "unsetup")
     assert out.returncode == 0, out.stderr
     assert json.loads((claude_dir / "settings.json").read_text()) == before
     assert (home / ".zshrc").read_text() == "export A=1\n"
+    assert "alias claude='aisw claude'" in run(home, "aisw", "setup").stdout
+
+
+@pytest.mark.parametrize("old", ["# aisw: three Claude accounts\nalias claude=aisw\n", "# clsw: x\nalias claude=aisw\n"])
+def test_unsetup_removes_the_old_alias_too(home, old):
+    (home / ".zshrc").write_text("export A=1\n" + old)
+    out = run(home, "aisw", "unsetup")
+    assert out.returncode == 0, out.stderr
+    assert (home / ".zshrc").read_text() == "export A=1\n"
+
+
+def test_unsetup_leaves_an_empty_zshrc_when_only_the_alias_was_there(home):
+    (home / ".zshrc").write_text("alias claude='aisw claude'\n")
+    run(home, "aisw", "unsetup")
+    assert (home / ".zshrc").read_text() == ""
+    assert not (home / ".zshrc.tmp").exists()
 
 
 def test_test_hit_marks_the_newest_session(home):
@@ -297,7 +316,81 @@ def test_help_lists_commands_without_starting_claude(home):
     out = run(home, "aisw", "help")
     assert out.returncode == 0
     assert "aisw resume" in out.stdout and "aisw test-hit" in out.stdout
+    assert "aisw claude" in out.stdout and "alias claude='aisw claude'" in out.stdout
     assert not (home / "calls.log").exists()
+
+
+# Fake dashboard: logs that it ran; writes $HOME/ui-choice (e.g. "start b") as its result, once.
+FAKE_UI = """#!/usr/bin/env bash
+echo ran >> "$HOME/ui.log"
+if [ -f "$HOME/ui-choice" ]; then cat "$HOME/ui-choice" > "$AISW_UI_RESULT"; rm "$HOME/ui-choice"; fi
+"""
+
+
+@pytest.fixture
+def ui(home):
+    fake = home / "fake-ui"
+    fake.write_text(FAKE_UI)
+    fake.chmod(0o755)
+    return fake
+
+
+def test_aisw_alone_opens_the_dashboard_not_claude(home, ui):
+    out = run(home, "aisw", ui=ui)
+    assert out.returncode == 0, out.stderr
+    assert (home / "ui.log").read_text() == "ran\n"
+    assert not (home / "calls.log").exists()
+
+
+def test_dashboard_start_b_starts_claude_on_b(home, ui):
+    (home / "hits").write_text("")
+    (home / "ui-choice").write_text("start b")
+    out = run(home, "aisw", "ui", ui=ui)
+    assert out.returncode == 0, out.stderr
+    assert (home / "calls.log").read_text().splitlines() == [f".claude-b {home} "]
+
+
+def test_aisw_alone_start_from_dashboard_starts_claude(home, ui):
+    (home / "hits").write_text("")
+    (home / "ui-choice").write_text("start c")
+    run(home, "aisw", ui=ui)
+    assert (home / "calls.log").read_text().splitlines() == [f".claude-c {home} "]
+    assert (home / "ui.log").read_text() == "ran\n"  # not back to the dashboard
+
+
+def test_aisw_claude_picks_the_first_free_account(home):
+    (home / "hits").write_text("")
+    block(home, "a")
+    out = run(home, "aisw", "claude", "--continue")
+    assert out.returncode == 0, out.stderr
+    assert (home / "calls.log").read_text().splitlines() == [f".claude-b {home} --continue"]
+
+
+@pytest.mark.parametrize(
+    "args",
+    [("claude", "c", "--dry-run"), ("claude", "--dry-run", "c"), ("--dry-run", "claude", "c"), ("--dry-run", "c")],
+)
+def test_dry_run_with_a_forced_account(home, args):
+    out = run(home, "aisw", *args)
+    assert out.stdout.strip() == f"CLAUDE_CONFIG_DIR={home}/.claude-c {home}/fake-claude"
+
+
+def test_claude_dry_run_and_old_dry_run_print_a(home):
+    for args in (("claude", "--dry-run"), ("--dry-run",)):
+        out = run(home, "aisw", *args)
+        assert out.stdout.strip() == f"CLAUDE_CONFIG_DIR={home}/.claude-a {home}/fake-claude"
+
+
+def test_account_letter_still_starts_claude(home):
+    (home / "hits").write_text("")
+    run(home, "aisw", "b", "--resume", "s-1")
+    assert (home / "calls.log").read_text().splitlines() == [f".claude-b {home} --resume s-1"]
+
+
+def test_aisw_claude_forced_account_passes_options(home):
+    (home / "hits").write_text("")
+    run(home, "aisw", "claude", "b", "--resume", "s-1")
+    assert (home / "calls.log").read_text().splitlines() == [f".claude-b {home} --resume s-1"]
 
 
 # Fake codex: logs its folder and prompt, keeps a copy of the handoff note it was pointed at.
@@ -337,7 +430,7 @@ def test_all_used_up_hands_over_to_codex_on_yes(home, codex):
     )
     block(home, "a", "b", "c")
     (home / "state" / "fallback").write_text("codex\n")
-    out = run(home, "aisw", stdin="y\n", codex=codex, tmpdir=home)
+    out = run(home, "aisw", "claude", stdin="y\n", codex=codex, tmpdir=home)
     assert out.returncode == 0, out.stderr
     assert "Continue in Codex? [y/N]" in out.stderr
     folder, prompt = (home / "codex.log").read_text().strip().split("|", 1)
@@ -350,12 +443,12 @@ def test_all_used_up_hands_over_to_codex_on_yes(home, codex):
 def test_all_used_up_without_yes_stops_as_before(home, codex):
     block(home, "a", "b", "c")
     (home / "state" / "fallback").write_text("codex\n")
-    out = run(home, "aisw", stdin="\n", codex=codex)
+    out = run(home, "aisw", "claude", stdin="\n", codex=codex)
     assert out.returncode == 1
     assert not (home / "codex.log").exists()
 
 
 def test_no_codex_question_when_fallback_is_off(home, codex):
     block(home, "a", "b", "c")
-    out = run(home, "aisw", stdin="y\n", codex=codex)
+    out = run(home, "aisw", "claude", stdin="y\n", codex=codex)
     assert out.returncode == 1 and "Codex" not in out.stderr

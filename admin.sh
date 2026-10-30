@@ -1,7 +1,8 @@
 # aisw setup / unsetup / test-hit. Sourced by aisw (needs common.sh and $CLAUDE_BIN), not run.
 
 SHARED="projects settings.json skills plugins"
-ALIAS_LINE="alias claude=aisw"
+ALIAS_LINE="alias claude='aisw claude'"
+OLD_ALIAS_LINE="alias claude=aisw"  # before 1.2.0; unsetup removes it too
 
 # Where the hooks should point: Homebrew's stable opt/ path, so upgrades don't break settings.json.
 lib_dir() {
@@ -49,7 +50,7 @@ do_setup() {
 
 Next:
   aisw login                       log in to each account
-  echo '$ALIAS_LINE' >> ~/.zshrc   optional: keep typing \`claude\`
+  echo "$ALIAS_LINE" >> ~/.zshrc   optional: keep typing \`claude\`
 EOF
 }
 
@@ -72,11 +73,13 @@ do_unsetup() {
     ' "$settings" > "$settings.tmp" && mv "$settings.tmp" "$settings"
     echo "  removed aisw's status line and limit hook"
   fi
-  if [ -f "$rc" ] && grep -qxF "$ALIAS_LINE" "$rc"; then
+  if [ -f "$rc" ] && grep -qxF -e "$ALIAS_LINE" -e "$OLD_ALIAS_LINE" "$rc"; then
     echo "~/.zshrc"
     backup "$rc"
-    grep -vxF "$ALIAS_LINE" "$rc" | grep -v '^# aisw: ' > "$rc.tmp" && mv "$rc.tmp" "$rc"
-    echo "  removed '$ALIAS_LINE' (open a new terminal)"
+    # grep -v exits 1 when nothing is left, so no && before mv.
+    grep -vxF -e "$ALIAS_LINE" -e "$OLD_ALIAS_LINE" "$rc" | grep -vE '^# (aisw|clsw): ' > "$rc.tmp"
+    mv "$rc.tmp" "$rc"
+    echo "  removed the claude alias (open a new terminal)"
   fi
   cat <<EOF
 

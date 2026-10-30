@@ -58,37 +58,43 @@ brew install mbshin/tools/aisw
 aisw setup                   # makes ~/.claude-a, -b, -c and adds the status line + limit hook
 aisw login                   # log in to each account (throwaway browser window)
 aisw who                     # A: you@work.example · Work Inc (Claude Team account) / …
-echo 'alias claude=aisw' >> ~/.zshrc && exec zsh
+echo "alias claude='aisw claude'" >> ~/.zshrc && exec zsh
 claude                       # starts on the first free account, as usual
+aisw                         # dashboard of all accounts
 ```
 
 Full guide: **[docs/HOWTO.md](docs/HOWTO.md)**.
 
 ## `claude` or `aisw`?
 
-Same program. `aisw` is the tool; the alias `claude=aisw` lets you keep typing `claude` out of habit.
+**`aisw` is the manager; an agent's name starts that agent.** The alias `claude='aisw claude'` lets you
+keep typing `claude` out of habit.
 
 | You type | What runs |
 |---|---|
-| `claude` | `aisw` (alias): picks a free account, then starts the real Claude Code |
-| `aisw` | The same, also without the alias |
+| `aisw` | The dashboard (same as `aisw ui`) |
+| `aisw claude` | Picks a free account, then starts the real Claude Code |
+| `claude` | `aisw claude` (alias) |
+| `aisw codex` | Hands this folder's newest Claude session to Codex |
 | `command claude` | The real Claude Code, no switching |
 
-**Start Claude with `claude`, manage accounts with `aisw`.** No alias? Use `aisw` for both.
+No alias? Use `aisw claude` to start Claude. Old forms still work: `aisw a`, `aisw --resume …`
+(any args that start with `-`) mean `aisw claude …`; only plain `aisw` changed in 1.2.0.
 
 ## Commands
 
-| Start Claude | |
+| Start Claude (`claude` = `aisw claude` with the alias) | |
 |---|---|
 | `claude` | First free account, A → B → C |
 | `claude a` · `claude b` · `claude c` | Force an account |
 | `claude --continue`, `--resume`, `-n name` | All normal options pass through |
+| `claude --dry-run` | Print which account would start |
 
 | Manage accounts | |
 |---|---|
 | `aisw who` | Login, owner and plan of each account |
 | `aisw status` | Free, or used up until when |
-| `aisw ui` | Dashboard |
+| `aisw` · `aisw ui` | Dashboard |
 | `aisw resume [words]` | Fuzzy-find any past conversation (all folders) and resume it on a free account |
 | `aisw login [a\|b\|c]` | Log in to every missing account, or one |
 | `aisw help` | All commands |
@@ -111,14 +117,14 @@ works from the note and the files, not the full history. Off again: `aisw unsetu
 ## How it works
 
 ```
- claude (alias) ──► aisw ──► CLAUDE_CONFIG_DIR=~/.claude-a claude
-                                   │
-            status line ◄──────────┤  usage % → ~/.aisw/a.usage.json
-            StopFailure hook ◄─────┘  rate_limit → ~/.aisw/a.limit + handoff.json
-                                   │
-                         you type /exit
-                                   ▼
-                  aisw ──► CLAUDE_CONFIG_DIR=~/.claude-b claude --resume <session> "<continue>"
+ claude (alias) ──► aisw claude ──► CLAUDE_CONFIG_DIR=~/.claude-a claude
+                                          │
+            status line ◄─────────────────┤  usage % → ~/.aisw/a.usage.json
+            StopFailure hook ◄────────────┘  rate_limit → ~/.aisw/a.limit + handoff.json
+                                          │
+                                you type /exit
+                                          ▼
+                  aisw claude ──► CLAUDE_CONFIG_DIR=~/.claude-b claude --resume <session> "<continue>"
 ```
 
 - Each account is a Claude Code config folder (`CLAUDE_CONFIG_DIR`) with its own login; `projects/`,
@@ -149,7 +155,7 @@ Claude Code features and never reads, copies or writes login tokens.
 
 Until 1.0.1 this was `clsw` (Claude switch). Moving over keeps your logins (they live in `~/.claude-a` …):
 `brew uninstall clsw && brew install mbshin/tools/aisw && aisw setup`, then change `alias claude=clsw` to
-`alias claude=aisw`. `~/.clsw` moves to `~/.aisw` on first run.
+`alias claude='aisw claude'`. `~/.clsw` moves to `~/.aisw` on first run.
 
 ## License
 

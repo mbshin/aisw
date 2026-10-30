@@ -73,12 +73,13 @@ Wrong account in a slot? `aisw login b` redoes just that one.
 ## 4. Turn it on
 
 ```zsh
-echo 'alias claude=aisw' >> ~/.zshrc
+echo "alias claude='aisw claude'" >> ~/.zshrc
 exec zsh
 claude --dry-run     # CLAUDE_CONFIG_DIR=/Users/you/.claude-a claude
 ```
 
-Inside the wrapper `claude` still means the real Claude Code, so nothing loops.
+Inside the wrapper `claude` still means the real Claude Code, so nothing loops. No alias? Type
+`aisw claude` wherever this guide says `claude`. Plain `aisw` opens the dashboard.
 
 ## 5. Everyday use
 
@@ -88,7 +89,7 @@ Inside the wrapper `claude` still means the real Claude Code, so nothing loops.
 | Continue the last conversation | `claude --continue` |
 | A specific account | `claude b`, `claude b --resume` |
 | Which account am I on? | Status line: `A`, or `B · 5h 72% · 7d 40%` |
-| Overview | `aisw status`, `aisw ui` |
+| Overview | `aisw` (dashboard), `aisw status` |
 | Without aisw | `command claude` |
 
 Order of preference is A → B → C: put the account you want to use up first in A.
@@ -110,7 +111,7 @@ elsewhere before the hard stop.
 ## 7. The dashboard
 
 ```zsh
-aisw ui
+aisw          # or aisw ui
 ```
 
 | Key | Does |
@@ -127,7 +128,7 @@ It refreshes every 5 seconds. Usage gauges appear once an account has sent usage
 
 ```zsh
 mkdir -p ~/aisw-trial && cd ~/aisw-trial
-aisw -n aisw-trial                     # Terminal 1: say "remember the word mango"
+aisw claude -n aisw-trial              # Terminal 1: say "remember the word mango"
 ```
 
 In a second terminal, pretend A just hit its limit in that session:
