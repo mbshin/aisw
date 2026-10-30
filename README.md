@@ -147,8 +147,9 @@ Claude Code features and never reads, copies or writes login tokens.
 
 ## Renamed from clsw
 
-Until 1.0.1 this was `clsw` (Claude switch). The `clsw` command still works, and `~/.clsw` moves to
-`~/.aisw` on first run. Run `aisw setup` once after upgrading so the hooks point to the new path.
+Until 1.0.1 this was `clsw` (Claude switch). Moving over keeps your logins (they live in `~/.claude-a` …):
+`brew uninstall clsw && brew install mbshin/tools/aisw && aisw setup`, then change `alias claude=clsw` to
+`alias claude=aisw`. `~/.clsw` moves to `~/.aisw` on first run.
 
 ## License
 
