@@ -13,7 +13,7 @@
 . "$(dirname "$0")/common.sh"
 . "$(dirname "$0")/tools.sh"
 
-VERSION=2.0.1
+VERSION=2.0.2
 COMMANDS="list add login remove activate deactivate help"
 RC_LINE='command -v aisw >/dev/null && eval "$(aisw shell-init zsh)"'
 RC_COMMENT='# aisw: lets `aisw activate` change this shell'
