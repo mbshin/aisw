@@ -924,7 +924,7 @@ if [ "$1" = models ]; then [ -f "$HOME/agy-logged-in" ] && { echo gemini; exit 0
 echo "$PWD|$*" >> "$HOME/agy.log"
 note=$(grep -o '/[^ ]*aisw-handoff[^ ]*' <<<"$*" | head -1)
 [ -n "$note" ] && cp "$note" "$HOME/agy-note.md"
-[ $# -eq 0 ] && touch "$HOME/agy-logged-in"
+if [ $# -eq 0 ]; then touch "$HOME/agy-logged-in"; [ -n "${AGY_HANG:-}" ] && exec sleep 30; fi
 exit 0
 """
 
@@ -1172,3 +1172,28 @@ def test_login_codex2_default_browser_login_uses_its_folder(home, slot_codex):
     out = run_fb(home, "login", "codex2", codex=slot_codex)
     assert out.returncode == 0, out.stderr
     assert (home / ".codex-2" / "auth.json").exists()
+
+
+def test_login_agy_closes_antigravity_by_itself_after_sign_in(home, agy):
+    import time as _time
+    env = {
+        "PATH": os.environ["PATH"], "HOME": str(home), "AISW_STATE": str(home / "state"),
+        "AISW_CLAUDE": str(home / "fake-claude"), "AISW_QUIET": "1", "TMPDIR": str(home),
+        "AISW_AGY": str(agy), "AISW_CODEX": str(home / "no-codex"), "AISW_BROWSER": "/usr/bin/true",
+        "AGY_HANG": "1",
+    }
+    started = _time.time()
+    out = subprocess.run([str(TOOL / "aisw"), "login", "agy"], env=env, capture_output=True, text=True,
+                         cwd=home, check=False, timeout=25)
+    assert _time.time() - started < 15  # did not wait for the 30 s "TUI"
+    assert out.returncode == 0, out.stderr
+    assert "closes by itself" in out.stdout and "Antigravity: Logged in" in out.stdout
+
+
+def test_login_agy_when_already_signed_in_does_not_start_it(home, agy):
+    (home / "agy-logged-in").touch()
+    out = run_fb(home, "login", "agy", agy=agy)
+    assert out.returncode == 0, out.stderr
+    assert "already signed in" in out.stdout
+    assert not (home / "agy.log").exists()
+    assert (home / "state" / "fallback").read_text().split() == ["agy"]

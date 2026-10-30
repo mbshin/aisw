@@ -235,12 +235,35 @@ ChatGPT blocks device-code sign-in for this account. To use it next time:
 EOF2
 }
 
-# aisw login agy: Antigravity signs in on its first start. Run it once; quit it after the sign-in.
+# aisw login agy: Antigravity signs in on its first start (no login command). Start it, watch for the
+# sign-in in the background, and quit it as soon as it's done, so nobody has to press Ctrl+C.
 agy_login() {
+  local parent=$$ watcher
   tool_missing agy && return 1
+  if [ "$(agy_status)" = "Logged in" ]; then
+    echo "Antigravity: already signed in."
+    return 0
+  fi
   echo "== Antigravity: sign in with your Google account in the browser window it opens."
-  echo "   When its prompt appears, quit it (Ctrl+C) to come back here."
+  echo "   It closes by itself once you're signed in."
+  (
+    while sleep 2; do
+      if [ "$(agy_status)" = "Logged in" ]; then
+        sleep 1
+        # Like Ctrl+C; TERM if it's still running a moment later.
+        for p in $(pgrep -P "$parent"); do [ "$p" != "$BASHPID" ] && kill -INT "$p" 2>/dev/null; done
+        sleep 2
+        for p in $(pgrep -P "$parent"); do [ "$p" != "$BASHPID" ] && kill -TERM "$p" 2>/dev/null; done
+        break
+      fi
+    done
+  ) &
+  watcher=$!
   "$AGY_BIN"
+  kill "$watcher" 2>/dev/null
+  wait "$watcher" 2>/dev/null
+  stty sane 2>/dev/null
+  echo
   close_signin_browser
   echo "Antigravity: $(agy_status)"
 }

@@ -110,7 +110,9 @@ def test_reset_clears_the_limit_after_yes(env):
     limit.write_text(str(int(time.time()) + 600))
     run_app(home, state, claude, None, ["r", "tab", "shift+tab"])
     assert limit.exists()  # dialog open, nothing pressed yet
-    run_app(home, state, claude, None, ["r", "enter"])
+    run_app(home, state, claude, None, ["r", "enter"])  # Enter = the focused "No"
+    assert limit.exists()
+    run_app(home, state, claude, None, ["r", "y"])
     assert not limit.exists()
 
 
@@ -162,5 +164,16 @@ def test_reset_no_keeps_the_limit(env):
     home, state, claude = env
     limit = state / "b.limit"
     limit.write_text(str(int(time.time()) + 600))
-    run_app(home, state, claude, None, ["down", "r", "tab", "enter"])  # tab to No
+    run_app(home, state, claude, None, ["down", "r", "n"])
     assert limit.exists()
+
+
+def test_login_on_a_signed_in_account_asks_first_and_defaults_to_no(env):
+    home, state, claude = env
+    result = home / "result"
+    run_app(home, state, claude, result, ["l", "s", "enter"])  # typing "ls⏎" by mistake
+    assert not result.exists() or result.read_text() == ""
+    run_app(home, state, claude, result, ["l", "n"])
+    assert not result.exists() or result.read_text() == ""
+    run_app(home, state, claude, result, ["l", "y"])
+    assert result.read_text() == "login a\n"

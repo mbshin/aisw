@@ -133,9 +133,17 @@ class Card(Static, can_focus=True):
 
 
 class Confirm(ModalScreen[bool]):
+    BINDINGS: ClassVar = [Binding("y", "answer(True)", "yes"), Binding("n,escape", "answer(False)", "no")]
+
     def __init__(self, question: str) -> None:
         super().__init__()
         self.question = question
+
+    def on_mount(self) -> None:
+        self.query_one("#no", Button).focus()  # Enter on a stray keypress must not say yes
+
+    def action_answer(self, yes: bool) -> None:
+        self.dismiss(yes)
 
     def compose(self) -> ComposeResult:
         with Vertical(id="dialog"):
@@ -194,7 +202,7 @@ class AiswUI(App):
             for acct in ACCOUNTS:
                 yield Card(acct)
         yield Static(
-            "[b]←→[/] select   [b]⏎[/] start   [b]l[/] login   [b]r[/] reset limit   [b]q[/] quit", id="hint"
+            "[b]←→[/] select   [b]⏎[/] start   [b]l[/] login (asks first)   [b]r[/] reset limit   [b]q[/] quit", id="hint"
         )
 
     def on_mount(self) -> None:
@@ -243,7 +251,16 @@ class AiswUI(App):
         self.finish("start")
 
     def action_login(self) -> None:
-        self.finish("login")
+        acct = self.selected
+        if not acct.login.email:
+            self.finish("login")
+            return
+
+        def done(yes: bool | None) -> None:
+            if yes:
+                self.finish("login")
+
+        self.push_screen(Confirm(f"{acct.name.upper()} is signed in as {acct.login.email}. Log in again?"), done)
 
     def action_reset(self) -> None:
         acct = self.selected.name

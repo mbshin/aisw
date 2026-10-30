@@ -63,7 +63,7 @@ hands over to that one.
 
 ```zsh
 brew install --cask antigravity-cli             # the command is `agy`
-aisw login agy                                  # sign in with Google, quit agy (Ctrl+C); also turns on the fallback
+aisw login agy                                  # sign in with Google; agy closes by itself; also turns on the fallback
 ```
 
 **Not Gemini CLI:** since 18 June 2026 Gemini CLI no longer serves personal Google accounts (free,
@@ -157,7 +157,7 @@ aisw          # or aisw ui
 |---|---|
 | `↑` `↓` | Select an account |
 | `enter` | Start Claude Code on it (in the current folder) |
-| `l` | Log in to it (empty browser window), then back to the dashboard |
+| `l` | Log in to it (asks first if it's already signed in; Enter = No), then back to the dashboard |
 | `r` | Clear its limit mark (asks first) |
 | `q` | Quit |
 
