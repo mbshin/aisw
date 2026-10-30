@@ -1197,3 +1197,25 @@ def test_login_agy_when_already_signed_in_does_not_start_it(home, agy):
     assert "already signed in" in out.stdout
     assert not (home / "agy.log").exists()
     assert (home / "state" / "fallback").read_text().split() == ["agy"]
+
+
+def test_login_codex_when_already_signed_in_does_nothing(home, device_codex):
+    (home / "codex-logged-in").touch()
+    out = run_codex_login(home, device_codex, device=False)
+    assert out.returncode == 0, out.stderr
+    assert "already signed in" in out.stdout
+    assert not (home / "codex-browser-login").exists()
+
+
+def test_login_codex_again_signs_in_anyway(home, device_codex):
+    (home / "codex-logged-in").touch()
+    fake, browser = device_codex
+    env = {
+        "PATH": os.environ["PATH"], "HOME": str(home), "AISW_STATE": str(home / "state"),
+        "AISW_CLAUDE": str(home / "fake-claude"), "AISW_QUIET": "1", "AISW_CODEX": str(fake),
+        "AISW_BROWSER": str(browser), "TMPDIR": str(home),
+    }
+    out = subprocess.run([str(TOOL / "aisw"), "login", "codex", "--again"], env=env, capture_output=True,
+                         text=True, cwd=home, check=False)
+    assert out.returncode == 0, out.stderr
+    assert (home / "codex-browser-login").exists()

@@ -188,6 +188,7 @@ Accounts:
   aisw login [a|b|c]         log in a Claude account (empty browser window, email pre-filled)
   aisw login codex | agy     log in Codex (browser) / Antigravity; that also makes it a fallback
   aisw login codex --device  Codex with a one-time code instead (ChatGPT must allow device code sign-in)
+  aisw login codex --again   sign Codex in again although it's signed in
   aisw login codex2          a 2nd Codex account (own folder ~/.codex-2; codex3 … too)
 
 Setup and testing:

@@ -171,12 +171,18 @@ fallback_who() {
 codex_login() {
   local tool=${1:-codex}
   tool_missing "$tool" && return 1
+  # A new login replaces the old one, and a cancelled one leaves Codex logged out: only on --again.
+  if [ "${2:-}" != --again ] && fallback_logged_in "$tool"; then
+    echo "$(tool_label "$tool"): already signed in (sign in again: aisw login $tool --again)."
+    return 0
+  fi
   if [ "${2:-}" = --device ]; then
     codex_device_login "$tool"
     return
   fi
-  echo "== $(tool_label "$tool"): sign in with your ChatGPT account in the browser"
-  with_tool "$tool" "$CODEX_BIN" login
+  echo "== $(tool_label "$tool"): sign in with your ChatGPT account in your browser"
+  # Normal browser, not aisw's empty profile: the ChatGPT sign-in didn't finish there.
+  with_tool "$tool" env -u BROWSER "$CODEX_BIN" login
 }
 
 codex_device_login() {
@@ -219,7 +225,7 @@ codex_device_login() {
     rm -f "$out"
     codex_device_blocked_hint
     echo "== Falling back to the normal Codex login (your regular browser; sign in with the right account)"
-    with_tool "$tool" "$CODEX_BIN" login
+    with_tool "$tool" env -u BROWSER "$CODEX_BIN" login
     return
   fi
   [ "$rc" -eq 0 ] || cat "$out" >&2
