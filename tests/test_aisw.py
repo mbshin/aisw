@@ -843,6 +843,15 @@ def test_test_hit_without_sessions_says_so(home):
 
 
 FAKE_CODEX_DEVICE = """#!/usr/bin/env bash
+if [ "$1 $2" = "login --device-auth" ] && [ -n "${CODEX_DEVICE_BLOCKED:-}" ]; then
+  echo 'Enable device code sign-in for Codex, Excel, PowerPoint, and Word in ChatGPT Security Settings, then run "codex login --device-auth" again.'
+  exit 1
+fi
+if [ "$1" = login ] && [ $# -eq 1 ]; then
+  echo "browser login" >> "$HOME/codex-browser-login"
+  touch "$HOME/codex-logged-in"
+  exit 0
+fi
 if [ "$1 $2" = "login --device-auth" ]; then
   printf 'Follow these steps\\n1. Open this link\\n   \\033[94mhttps://auth.openai.com/codex/device\\033[0m\\n'
   printf '2. Enter this one-time code\\n   \\033[1mAB12-CD34E\\033[0m\\n'
@@ -897,3 +906,12 @@ def test_login_codex_failure_exits_non_zero(home, device_codex):
 def test_login_codex_without_codex_installed(home, device_codex):
     out = run_codex_login(home, device_codex, {"AISW_CODEX": str(home / "no-such-codex")})
     assert out.returncode == 1 and "Codex not found" in out.stderr
+
+
+def test_login_codex_falls_back_when_device_code_is_blocked(home, device_codex):
+    out = run_codex_login(home, device_codex, {"CODEX_DEVICE_BLOCKED": "1"})
+    assert out.returncode == 0, out.stderr
+    assert "Settings → Security" in out.stdout and "Falling back" in out.stdout
+    assert (home / "codex-browser-login").exists()
+    assert not (home / "browser-urls").exists()  # no device link opened
+    assert "Codex: Logged in using ChatGPT" in out.stdout

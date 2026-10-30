@@ -84,6 +84,7 @@ codex_who() {
 
 # aisw login codex: device-code sign-in (link + one-time code), the link opened in the same empty
 # browser window as Claude logins, so the browser's current ChatGPT login is not reused.
+# If ChatGPT blocks device codes for the account, falls back to the normal browser login.
 codex_login() {
   local out pid url code rc i
   command -v "$CODEX_BIN" >/dev/null || { echo "Codex not found: brew install codex" >&2; return 1; }
@@ -97,18 +98,34 @@ codex_login() {
     kill -0 "$pid" 2>/dev/null || break
     sleep 0.2
   done
-  if [ -z "$url" ] || [ -z "$code" ]; then
-    cat "$out" >&2
+  if [ -n "$url" ] && [ -n "$code" ]; then
+    echo "== Codex: sign in with your ChatGPT account in the new browser window"
+    echo "   One-time code: $code   (expires in 15 minutes)"
+    "$BROWSER" "$url"
+    wait "$pid"
+    rc=$?
+    close_signin_browser
+  else
     kill "$pid" 2>/dev/null
-    rm -f "$out"
-    return 1
+    wait "$pid" 2>/dev/null
+    rc=1
   fi
-  echo "== Codex: sign in with your ChatGPT account in the new browser window"
-  echo "   One-time code: $code   (expires in 15 minutes)"
-  "$BROWSER" "$url"
-  wait "$pid"
-  rc=$?
-  close_signin_browser
+  if [ "$rc" -ne 0 ] && grep -qi "device code sign-in" "$out"; then
+    rm -f "$out"
+    codex_device_blocked_hint
+    echo "== Falling back to the normal Codex login (your regular browser; sign in with the right account)"
+    "$CODEX_BIN" login
+    return
+  fi
+  [ "$rc" -eq 0 ] || cat "$out" >&2
   rm -f "$out"
   return $rc
+}
+
+codex_device_blocked_hint() {
+  cat <<'EOF2'
+ChatGPT blocks device-code sign-in for this account. To use it next time:
+  chatgpt.com → profile → Settings → Security → turn on device code sign-in
+  (same account you sign in with; on a Business/Enterprise workspace only the admin can turn it on)
+EOF2
 }
