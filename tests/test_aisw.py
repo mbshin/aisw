@@ -532,3 +532,38 @@ def test_zsh_completion_parses():
     if not shutil.which("zsh"):
         pytest.skip("no zsh")
     assert subprocess.run(["zsh", "-n", str(TOOL / "completions" / "_aisw")], check=False).returncode == 0
+
+
+# --- emails for Codex and Antigravity (they don't report their account) -----------------------------
+
+
+def test_add_codex_asks_for_the_email_and_list_shows_it(home):
+    out = aisw(home, "add", "codex", stdin="me@x\n", extra={"AISW_ASK": "1"})
+    assert out.returncode == 0, out.stderr
+    assert (home / "state" / "a.email").read_text().strip() == "me@x"
+    assert aisw(home, "list").stdout.splitlines()[1].split()[:3] == ["a", "codex", "me@x"]
+    assert aisw(home, "__names").stdout.strip() == "a:codex me@x"
+
+
+def test_add_codex_failed_forgets_the_email(home):
+    (home / "login-fails").write_text("")
+    aisw(home, "add", "codex", stdin="me@x\n", extra={"AISW_ASK": "1"})
+    assert not (home / "state" / "a.email").exists()
+
+
+def test_login_signed_in_codex_sets_the_email_without_signing_in_again(home):
+    (home / ".codex").mkdir()
+    (home / ".codex" / "auth.json").write_text("{}")
+    write_accounts(home, f"d codex {home}/.codex")
+    aisw(home, "login", "d", stdin="me@x\n\n", extra={"AISW_ASK": "1"})  # email, then Enter = don't sign in again
+    assert (home / "state" / "d.email").read_text().strip() == "me@x"
+    assert not (home / "codex-logins.log").exists()
+    aisw(home, "login", "d", stdin="\n\n", extra={"AISW_ASK": "1"})  # Enter keeps the email
+    assert (home / "state" / "d.email").read_text().strip() == "me@x"
+
+
+def test_login_agy_sets_the_email(home):
+    (home / "agy-in").write_text("")
+    write_accounts(home, f"e agy {home}/.gemini/antigravity-cli")
+    aisw(home, "login", "e", stdin="g@x\n", extra={"AISW_ASK": "1"})
+    assert aisw(home, "list").stdout.splitlines()[1].split()[:3] == ["e", "agy", "g@x"]

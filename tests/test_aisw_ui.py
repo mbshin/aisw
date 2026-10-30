@@ -123,6 +123,14 @@ def test_cards_show_every_tool_and_the_current_account(env):
     assert "Antigravity" in cards["e"][0] and "not signed in" in cards["e"][0]
 
 
+def test_codex_card_shows_the_saved_email(env):
+    _, state, _ = env
+    (state / "d.email").write_text("me@x\n")
+    seen = []
+    run_app(env, [], lambda app: seen.append(str(app.query_one("#card-d", ui.Card).render())))
+    assert "me@x" in seen[0] and "ChatGPT" not in seen[0]
+
+
 def test_focus_starts_on_the_current_account(env):
     seen = []
     run_app(env, [], lambda app: seen.append(app.focused.acct), current="d")

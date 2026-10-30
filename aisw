@@ -13,7 +13,7 @@
 . "$(dirname "$0")/common.sh"
 . "$(dirname "$0")/tools.sh"
 
-VERSION=2.0.0
+VERSION=2.0.1
 COMMANDS="list add login remove activate deactivate help"
 RC_LINE='command -v aisw >/dev/null && eval "$(aisw shell-init zsh)"'
 RC_COMMENT='# aisw: lets `aisw activate` change this shell'
@@ -128,8 +128,8 @@ list_plain() {
         else state=free; fi
         f5=$(pct five_hour "$name"); f7=$(pct seven_day "$name")
         ;;
-      codex) login=ChatGPT; if codex_signed_in "$dir"; then state="signed in"; else state="not signed in"; fi ;;
-      agy) login=Google; if agy_signed_in; then state="signed in"; else state="not signed in"; fi ;;
+      codex) login=$(saved_email "$name" ChatGPT); if codex_signed_in "$dir"; then state="signed in"; else state="not signed in"; fi ;;
+      agy) login=$(saved_email "$name" Google); if agy_signed_in; then state="signed in"; else state="not signed in"; fi ;;
     esac
     mark=" "; [ "$name" = "$cur" ] && mark="*"
     printf '%s %-6s %-7s %-30s %-6s %-18s %-5s %s\n' "$mark" "$name" "$tool" "${login:--}" "${plan:--}" "$state" \
@@ -167,6 +167,21 @@ do_list() {
     esac
   done
   rm -f "$result"
+}
+
+# Codex and Antigravity don't say which account is signed in (and aisw never reads tokens), so their
+# email is the one typed in at add / login, kept in $STATE/<name>.email.
+saved_email() { local e; e=$(cat "$STATE/$1.email" 2>/dev/null); echo "${e:-${2:-}}"; }
+
+asking() { [ -t 0 ] || [ "${AISW_ASK:-}" = 1 ]; }  # AISW_ASK: tests only
+
+# ask_email <name>: Enter keeps the saved one (or skips).
+ask_email() {
+  local name=$1 old email
+  asking || return 0
+  old=$(saved_email "$name")
+  read -rp "Email for $name${old:+ [$old]} (Enter to ${old:+keep}${old:-skip}): " email
+  if [ -n "$email" ]; then echo "$email" > "$STATE/$name.email"; fi
 }
 
 # --- add / login / remove --------------------------------------------------------------------------
@@ -266,11 +281,13 @@ do_add() {
   ensure_setup
   if [ ! -d "$dir" ]; then made=1; fi
   case $tool in claude) make_claude_folder "$dir" ;; codex) mkdir -p "$dir" ;; esac
+  [ "$tool" = claude ] || ask_email "$name"
   if signed_in "$tool" "$dir"; then
     echo "$name: already signed in."
   elif ! sign_in "$name" "$tool" "$dir"; then
     echo "Sign-in didn't finish: $name not added." >&2
     if [ -n "$made" ] && [ "${dir#"$STATE"/home/}" != "$dir" ]; then rm -rf "$dir"; fi
+    rm -f "$STATE/$name.email"
     return 1
   fi
   echo "$name $tool $dir" >> "$ACCOUNTS_FILE"
@@ -283,9 +300,10 @@ do_login() {
   if ! has_account "$name"; then unknown_account "$name"; return 1; fi
   tool=$(tool_of "$name"); dir=$(folder_of "$name")
   ensure_setup
+  [ "$tool" = claude ] || ask_email "$name"
   if [ "$tool" != claude ] && signed_in "$tool" "$dir"; then
     # A new Codex sign-in replaces the old one, and a cancelled one leaves it logged out: ask first.
-    if [ "$tool" = agy ] || [ ! -t 0 ]; then echo "$name: already signed in."; return 0; fi
+    if [ "$tool" = agy ] || ! asking; then echo "$name: already signed in."; return 0; fi
     read -rp "$name is signed in. Sign in again? [y/N] " ans
     case $ans in y|Y|yes) ;; *) return 0 ;; esac
   fi

@@ -267,7 +267,12 @@ class AiswUI(App):
 
     def load_logins(self) -> None:
         for name, tool, folder in self.rows:
-            self.logins[name] = read_login(tool, folder, self.bins)
+            login = read_login(tool, folder, self.bins)
+            # Codex and Antigravity don't report their account: show the email typed in at add / login.
+            saved = self.state / f"{name}.email"
+            if tool != "claude" and saved.exists() and saved.read_text().strip():
+                login.email = saved.read_text().strip()
+            self.logins[name] = login
         self.loaded = True
         self.call_from_thread(self.refresh_cards)
 

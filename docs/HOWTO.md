@@ -32,6 +32,10 @@ Each `add` signs in right away and only signs in (the tool's chat screen doesn't
 | Codex | `codex login` in your normal browser (its sign-in didn't finish in an empty profile) |
 | Antigravity | `agy` starts once and quits by itself after you sign in |
 
+Codex and Antigravity don't report which account is signed in, so `add` asks for the email (a label for
+`aisw list`; Enter skips). For an account that's already there: `aisw login d` asks for it and only signs in again
+if you say so.
+
 If you cancel, nothing is added. The **first** `add` (or `login`) asks once to set up:
 
 - the status line and limit hook in `~/.claude/settings.json` (a backup is kept), shared by every Claude account;
