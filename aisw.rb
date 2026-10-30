@@ -12,7 +12,7 @@ class Aisw < Formula
   depends_on "uv" # runs ui.py; Textual is fetched into uv's cache on the first `aisw ui`
 
   def install
-    libexec.install "aisw", "common.sh", "on-limit.sh", "statusline.sh", "signin-browser.sh", "ui.py", "admin.sh", "codex.sh"
+    libexec.install "aisw", "common.sh", "on-limit.sh", "statusline.sh", "signin-browser.sh", "ui.py", "admin.sh", "fallback.sh"
     # An exec script, not a symlink, so `dirname "$0"` in aisw still finds common.sh.
     bin.write_exec_script libexec/"aisw"
   end

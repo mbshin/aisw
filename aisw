@@ -5,7 +5,7 @@
 #
 # Start agents:
 #   aisw claude [a|b|c] [claude args...]  first free account (a first), or force one
-#   aisw codex                   hand this folder's newest Claude session to Codex (codex.sh)
+#   aisw codex | agy             hand this folder's newest Claude session to Codex / Antigravity (fallback.sh)
 #   aisw a|b|c ..., aisw -x ...  same as aisw claude ... (kept for old scripts)
 #   aisw claude --dry-run [...]  print the command instead of running it
 # Manage:
@@ -13,13 +13,13 @@
 #   aisw help | -h               this list
 #   aisw status                  show all accounts
 #   aisw who                     show who is logged in to each account
-#   aisw login [a|b|c|codex] ...  log in to one account (or Codex), or to every account not logged in yet
+#   aisw login [a|b|c|codex|agy]  log in to one account (or Codex / Antigravity), or to every missing account
 #   aisw ui | u                  dashboard of the three accounts (start, login, reset limit)
 #   aisw resume [words]          pick a past conversation (any folder) with fzf, resume it on a free account
 #   aisw setup | unsetup         make the account folders + status line + limit hook / take them out again
 #   aisw test-hit a|b|c [dir]    pretend an account just hit its limit (to try a switch)
 . "$(dirname "$0")/common.sh"
-. "$(dirname "$0")/codex.sh"
+. "$(dirname "$0")/fallback.sh"
 
 CLAUDE_BIN=${AISW_CLAUDE:-claude}
 WAIT=${AISW_WAIT:-3}
@@ -98,6 +98,7 @@ do_login() {
   BROWSER=${AISW_BROWSER:-$(dirname "$0")/signin-browser.sh} # AISW_BROWSER: tests only
   case ${1:-} in
     codex) codex_login || code=1; codex_enabled || echo "Codex: $("$CODEX_BIN" login status 2>&1 | head -1)" ;;
+    agy) agy_login || code=1 ;;
     a|b|c) login_one "$@" || code=1 ;;
     "")
       for acct in $ACCOUNTS; do
@@ -105,10 +106,10 @@ do_login() {
         login_one "$acct" || return 1
       done
       ;;
-    *) echo "usage: aisw login [a|b|c|codex] [claude auth login args...]" >&2; return 1 ;;
+    *) echo "usage: aisw login [a|b|c|codex|agy] [claude auth login args...]" >&2; return 1 ;;
   esac
   show_who
-  codex_who
+  fallback_who
   return $code
 }
 
@@ -170,7 +171,7 @@ aisw alone: dashboard. Start agents:
   aisw claude a|b|c          force an account
   aisw claude --continue     any Claude Code option passes through (--resume, -n name, ...)
   aisw claude --dry-run      print which account would start
-  aisw codex                 hand this folder's newest Claude session to Codex now
+  aisw codex | agy           hand this folder's newest Claude session to Codex / Antigravity now
   (alias claude='aisw claude' lets you type claude instead; aisw a|b|c still works)
 
 Accounts:
@@ -178,15 +179,17 @@ Accounts:
   aisw status                free, or used up until when (with usage %)
   aisw ui (or aisw)          dashboard (←→ select, enter start, l login, r reset, q quit)
   aisw resume [words]        find any past conversation with fzf and resume it
-  aisw login [a|b|c|codex]   log in (empty browser window; Claude: email pre-filled, Codex: one-time code)
+  aisw login [a|b|c|codex|agy]  log in (Claude: empty browser window, email pre-filled;
+                             Codex: one-time code; Antigravity: signs in on first start)
 
 Setup and testing:
   aisw setup | unsetup       add / remove account folders, status line and limit hook
-  aisw setup --codex         turn the Codex fallback on (unsetup --codex: off)
+  aisw setup --codex | --agy turn a fallback on, in the order you add them (unsetup --codex|--agy: off)
   aisw test-hit a|b|c [dir]  pretend an account just hit its limit
 
-Codex fallback (opt-in: aisw setup --codex):
-  all Claude accounts used up → asks "Continue in Codex? [y/N]" with a handoff note
+Fallbacks (opt-in: aisw setup --codex, --agy):
+  all Claude accounts used up → asks "Continue in Codex? [y/N]", then "Continue in Antigravity? [y/N]",
+  with a handoff note; aisw codex / aisw agy hand over right away
 
 When a limit is hit: wait for the notification, type /exit, it goes on in the next account.
 Claude Code's own help: claude --help (or command claude --help). Docs: github.com/mbshin/aisw
@@ -200,8 +203,8 @@ if [ "$1" = --dry-run ]; then dry=1; shift; fi
 case ${1:-} in
   help|-h) show_help; exit 0 ;;
   status) show_status; exit 0 ;;
-  who) show_who; codex_who; exit 0 ;;
-  codex) shift; go_codex "$(newest_session_in "$PWD")" "$PWD"; exit ;;
+  who) show_who; fallback_who; exit 0 ;;
+  codex|agy) go_tool "$1" "$(newest_session_in "$PWD")" "$PWD"; exit ;;
   login) shift; do_login "$@"; exit ;;
   ui|u) run_ui; exit ;;
   resume) shift; pick_session "$@"; exit ;;
@@ -217,7 +220,7 @@ if [ -z "$acct" ]; then
   acct=$(pick_account) || {
     echo "All accounts are at their limit:" >&2
     show_status >&2
-    offer_codex "$(newest_session_in "$PWD")" "$PWD" && exit 0
+    offer_fallback "$(newest_session_in "$PWD")" "$PWD" && exit 0
     echo "Force one with: aisw claude a|b|c" >&2
     exit 1
   }
@@ -247,7 +250,7 @@ while :; do
   next=$(pick_account) || {
     echo "All accounts are at their limit:" >&2
     show_status >&2
-    offer_codex "$(session_file "$sid")" "$cwd" && exit 0
+    offer_fallback "$(session_file "$sid")" "$cwd" && exit 0
     echo "Resume later with: aisw claude --resume $sid" >&2
     exit $code
   }

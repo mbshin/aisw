@@ -4,7 +4,7 @@ Step-by-step guides. For what aisw is, see the [README](../README.md).
 
 | # | Guide |
 |---|---|
-| 1 | [Install](#1-install) |
+| 1 | [Install: aisw, Claude Code, Codex, Antigravity](#1-install) |
 | 2 | [Set up the accounts](#2-set-up-the-accounts) |
 | 3 | [Log in](#3-log-in) |
 | 4 | [Turn it on](#4-turn-it-on) |
@@ -14,15 +14,17 @@ Step-by-step guides. For what aisw is, see the [README](../README.md).
 | 8 | [Try a switch without waiting for a limit](#8-try-a-switch-without-waiting-for-a-limit) |
 | 9 | [Troubleshooting](#9-troubleshooting) |
 | 10 | [Update and uninstall](#10-update-and-uninstall) |
-| 11 | [Codex fallback](#11-codex-fallback) |
+| 11 | [Fallbacks: Codex and Antigravity](#11-fallbacks-codex-and-antigravity) |
 
 ## 1. Install
+
+### 1.1 aisw
 
 ```zsh
 brew install mbshin/tools/aisw
 ```
 
-This also installs `jq` (used by the scripts) and `uv` (runs the dashboard). Check:
+This also installs `jq` (scripts), `fzf` (`aisw resume`) and `uv` (runs the dashboard). Check:
 
 ```zsh
 aisw status
@@ -30,6 +32,40 @@ aisw status
 # B: free (no usage seen yet)
 # C: free (no usage seen yet)
 ```
+
+### 1.2 Claude Code (required)
+
+```zsh
+brew install --cask claude-code                 # or: curl -fsSL https://claude.ai/install.sh | bash
+claude --version
+```
+
+You need at least one Claude account (Pro, Max, Team or Enterprise); aisw uses up to three. You log
+them in with aisw in step 3, not with `claude` itself.
+
+### 1.3 Codex (optional fallback)
+
+```zsh
+brew install --cask codex
+aisw login codex                                # one-time code shown in Terminal
+codex login status                              # Logged in using ChatGPT
+```
+
+Needs a ChatGPT plan. The code sign-in must be allowed once: chatgpt.com → profile → **Settings →
+Security** → turn on **device code sign-in** (on a Business/Enterprise workspace only the admin can).
+If it's off, `aisw login codex` says so and falls back to the normal browser login.
+
+### 1.4 Antigravity CLI (optional fallback, Google's Gemini agent)
+
+```zsh
+brew install --cask antigravity-cli             # the command is `agy`
+aisw login agy                                  # starts agy once; sign in with Google, then quit it
+agy models                                      # lists models when you're signed in
+```
+
+**Not Gemini CLI:** since 18 June 2026 Gemini CLI no longer serves personal Google accounts (free,
+AI Pro, AI Ultra). Google moved them to Antigravity CLI. Gemini CLI (`brew install gemini-cli`) still
+works only with a paid Gemini API key or a Gemini Code Assist license, and aisw doesn't use it.
 
 ## 2. Set up the accounts
 
@@ -73,24 +109,24 @@ Wrong account in a slot? `aisw login b` redoes just that one.
 ## 4. Turn it on
 
 ```zsh
-echo "alias claude='aisw claude'" >> ~/.zshrc
-exec zsh
-claude --dry-run     # CLAUDE_CONFIG_DIR=/Users/you/.claude-a claude
+aisw claude --dry-run     # CLAUDE_CONFIG_DIR=/Users/you/.claude-a claude
+aisw claude               # start
 ```
 
-Inside the wrapper `claude` still means the real Claude Code, so nothing loops. No alias? Type
-`aisw claude` wherever this guide says `claude`. Plain `aisw` opens the dashboard.
+Optional: `echo "alias claude='aisw claude'" >> ~/.zshrc` lets you keep typing `claude` (inside aisw,
+`claude` still means the real Claude Code, so nothing loops). Without the alias, read `claude` in this guide
+as `aisw claude`. Plain `aisw` opens the dashboard.
 
 ## 5. Everyday use
 
 | Want | Type |
 |---|---|
-| Start | `claude` |
-| Continue the last conversation | `claude --continue` |
-| A specific account | `claude b`, `claude b --resume` |
+| Start | `aisw claude` |
+| Continue the last conversation | `aisw claude --continue` |
+| A specific account | `aisw claude b`, `aisw claude b --resume` |
 | Which account am I on? | Status line: `A`, or `B · 5h 72% · 7d 40%` |
 | Overview | `aisw` (dashboard), `aisw status` |
-| Without aisw | `command claude` |
+| Without aisw | `claude` (no alias) or `command claude` |
 
 Order of preference is A → B → C: put the account you want to use up first in A.
 
@@ -170,20 +206,23 @@ rm -rf ~/.claude-a ~/.claude-b ~/.claude-c
 
 Plain `claude` with `~/.claude` worked the whole time and keeps working.
 
-## 11. Codex fallback
+## 11. Fallbacks: Codex and Antigravity
+
+Install and log in first (§1.3, §1.4), then turn them on. They're offered in the order you add them.
 
 ```zsh
-brew install codex                    # if you don't have it yet
-aisw login codex                      # code shown in Terminal, sign-in in an empty browser window
 aisw setup --codex
+aisw setup --agy
+aisw who          # last lines: "Codex (fallback): …", "Antigravity (fallback): Logged in"
 ```
 
 | Situation | What happens |
 |---|---|
-| Last free Claude account hits its limit, you type `/exit` | "All Claude accounts are used up. Continue in Codex? [y/N]" |
-| You start `claude` while all are used up | Same question |
-| `aisw codex` | Hand this folder's newest Claude session to Codex now |
+| Last free Claude account hits its limit, you type `/exit` | "All Claude accounts are used up. Continue in Codex? [y/N]"; on no: "Continue in Antigravity? [y/N]" |
+| You start `aisw claude` while all are used up | Same questions |
+| `aisw codex` · `aisw agy` | Hand this folder's newest Claude session over now |
 
-The handoff note holds the first request, the last five, Claude's last message and the git state. When a
-Claude account is free again, `aisw resume` brings you back to the Claude conversation; it checks
-`git diff` for what Codex changed. Turn it off with `aisw unsetup --codex`.
+The handoff note holds the first request, the last five, Claude's last message and the git state. Codex
+gets it as its first prompt (`codex "<prompt>"`), Antigravity too (`agy -i "<prompt>"`). When a Claude
+account is free again, `aisw resume` brings you back to the Claude conversation; it checks `git diff` for
+what the other tool changed. Turn one off with `aisw unsetup --codex` or `--agy`.

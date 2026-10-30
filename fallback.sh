@@ -1,10 +1,28 @@
-# Codex as the last fallback (opt-in: aisw setup --codex). Sourced by aisw, not run.
-# Codex can't read Claude's session files, so it gets a handoff note: task, recent requests,
-# where Claude stopped, and the git state.
+# Codex and Antigravity as fallbacks when every Claude account is used up (opt-in: aisw setup --codex,
+# aisw setup --agy). Sourced by aisw, not run. Neither can read Claude's session files, so each gets a
+# handoff note: task, recent requests, where Claude stopped, and the git state.
 
 CODEX_BIN=${AISW_CODEX:-codex}
+AGY_BIN=${AISW_AGY:-agy}
 
-codex_enabled() { [ "$(cat "$STATE/fallback" 2>/dev/null)" = codex ]; }
+# Enabled fallbacks in the order they're offered, one per line of $STATE/fallback.
+fallbacks() { cat "$STATE/fallback" 2>/dev/null; }
+fallback_enabled() { fallbacks | grep -qx "$1"; }
+codex_enabled() { fallback_enabled codex; }
+fallback_add() { fallback_enabled "$1" || echo "$1" >> "$STATE/fallback"; }
+fallback_remove() {
+  local rest
+  rest=$(fallbacks | grep -vx "$1")
+  if [ -n "$rest" ]; then echo "$rest" > "$STATE/fallback"; else rm -f "$STATE/fallback"; fi
+}
+
+tool_label() { case $1 in codex) echo Codex ;; agy) echo Antigravity ;; esac; }
+tool_bin() { case $1 in codex) echo "$CODEX_BIN" ;; agy) echo "$AGY_BIN" ;; esac; }
+tool_install() { case $1 in codex) echo "brew install --cask codex" ;; agy) echo "brew install --cask antigravity-cli" ;; esac; }
+tool_missing() {
+  command -v "$(tool_bin "$1")" >/dev/null && return 1
+  echo "$(tool_label "$1") not found: $(tool_install "$1")" >&2
+}
 
 # Session file of a session id, or the newest session of a folder.
 session_file() { ls "$HOME"/.claude/projects/*/"$1".jsonl 2>/dev/null | head -1; }
@@ -48,38 +66,56 @@ write_note() {
   } > "$note"
 }
 
-# go_codex <session file or empty> <folder>: hand over and run Codex interactively.
-go_codex() {
-  local f=$1 dir=$2 note prompt code
-  command -v "$CODEX_BIN" >/dev/null || { echo "Codex not found: brew install codex" >&2; return 1; }
+# go_tool <codex|agy> <session file or empty> <folder>: hand over and run the tool interactively.
+go_tool() {
+  local tool=$1 f=$2 dir=$3 bin note prompt code
+  bin=$(tool_bin "$tool")
+  tool_missing "$tool" && return 1
   cd "$dir" || return 1
   if [ -z "$f" ]; then
-    "$CODEX_BIN"
+    "$bin"
     return
   fi
   note=$(mktemp "${TMPDIR:-/tmp}/aisw-handoff.XXXXXX")
   write_note "$f" "$dir" "$note"
   prompt="A Claude Code session hit its usage limit. Read $note for the task and progress, \
 check git status and git diff, then continue. Ask before anything destructive."
-  echo "Going on in Codex (handoff note: $note)."
-  "$CODEX_BIN" "$prompt"
+  echo "Going on in $(tool_label "$tool") (handoff note: $note)."
+  case $tool in
+    codex) "$bin" "$prompt" ;;
+    agy) "$bin" -i "$prompt" ;; # -i: first prompt, then stay interactive
+  esac
   code=$?
   rm -f "$note"
   return $code
 }
 
-# offer_codex <session file or empty> <folder>: the y/N question when every Claude account is used up.
-offer_codex() {
-  local ans
-  codex_enabled || return 1
-  printf 'All Claude accounts are used up. Continue in Codex? [y/N] ' >&2
-  read -r ans || ans=
-  case $ans in [yY]*) go_codex "$1" "$2" ;; *) return 1 ;; esac
+# offer_fallback <session file or empty> <folder>: when every Claude account is used up, ask for each
+# enabled fallback in order; the first yes takes over.
+offer_fallback() {
+  local tool ans
+  for tool in $(fallbacks); do
+    printf 'All Claude accounts are used up. Continue in %s? [y/N] ' "$(tool_label "$tool")" >&2
+    read -r ans || ans=
+    case $ans in [yY]*) go_tool "$tool" "$1" "$2"; return ;; esac
+  done
+  return 1
 }
 
-codex_who() {
-  codex_enabled || return 0
-  echo "Codex (fallback): $("$CODEX_BIN" login status 2>&1 | head -1)"
+# Antigravity has no status command; `agy models` fails with "Please sign in" when logged out.
+agy_status() {
+  command -v "$AGY_BIN" >/dev/null || { echo "not installed"; return; }
+  if "$AGY_BIN" models >/dev/null 2>&1; then echo "Logged in"; else echo "Not logged in"; fi
+}
+
+fallback_who() {
+  local tool
+  for tool in $(fallbacks); do
+    case $tool in
+      codex) echo "Codex (fallback): $("$CODEX_BIN" login status 2>&1 | head -1)" ;;
+      agy) echo "Antigravity (fallback): $(agy_status)" ;;
+    esac
+  done
 }
 
 # aisw login codex: device-code sign-in (link + one-time code), the link opened in the same empty
@@ -87,7 +123,7 @@ codex_who() {
 # If ChatGPT blocks device codes for the account, falls back to the normal browser login.
 codex_login() {
   local out pid url code rc i
-  command -v "$CODEX_BIN" >/dev/null || { echo "Codex not found: brew install codex" >&2; return 1; }
+  tool_missing codex && return 1
   out=$(mktemp "${TMPDIR:-/tmp}/aisw-codex-login.XXXXXX")
   "$CODEX_BIN" login --device-auth > "$out" 2>&1 &
   pid=$!
@@ -128,4 +164,14 @@ ChatGPT blocks device-code sign-in for this account. To use it next time:
   chatgpt.com → profile → Settings → Security → turn on device code sign-in
   (same account you sign in with; on a Business/Enterprise workspace only the admin can turn it on)
 EOF2
+}
+
+# aisw login agy: Antigravity signs in on its first start. Run it once; quit it after the sign-in.
+agy_login() {
+  tool_missing agy && return 1
+  echo "== Antigravity: sign in with your Google account in the browser window it opens."
+  echo "   When its prompt appears, quit it (Ctrl+C) to come back here."
+  "$AGY_BIN"
+  close_signin_browser
+  echo "Antigravity: $(agy_status)"
 }

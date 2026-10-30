@@ -16,13 +16,16 @@ backup() { cp "$1" "$1.bak-$(date +%Y%m%d-%H%M%S)" && echo "  backup: $1.bak-…
 
 do_setup() {
   local lib settings acct n
-  if [ "${1:-}" = --codex ]; then
-    command -v "$CODEX_BIN" >/dev/null || { echo "Install Codex first: brew install codex" >&2; return 1; }
-    echo codex > "$STATE/fallback"
-    echo "Codex fallback on: when every Claude account is used up, aisw offers to go on in Codex."
-    echo "Off again: aisw unsetup --codex"
-    return 0
-  fi
+  case ${1:-} in
+    --codex|--agy)
+      local tool=${1#--}
+      tool_missing "$tool" && return 1
+      fallback_add "$tool"
+      echo "$(tool_label "$tool") fallback on. Offered in this order when every Claude account is used up: $(fallbacks | tr '\n' ' ')"
+      echo "Off again: aisw unsetup $1"
+      return 0
+      ;;
+  esac
   lib=$(lib_dir)
   settings=$HOME/.claude/settings.json
   mkdir -p "$HOME/.claude/projects" "$HOME/.claude/skills" "$HOME/.claude/plugins"
@@ -56,10 +59,16 @@ EOF
 
 do_unsetup() {
   local settings=$HOME/.claude/settings.json rc=$HOME/.zshrc
-  if [ "${1:-}" = --codex ] || [ -f "$STATE/fallback" ]; then
+  case ${1:-} in
+    --codex|--agy)
+      fallback_remove "${1#--}"
+      echo "$(tool_label "${1#--}") fallback off."
+      return 0
+      ;;
+  esac
+  if [ -f "$STATE/fallback" ]; then
     rm -f "$STATE/fallback"
-    echo "Codex fallback off."
-    [ "${1:-}" = --codex ] && return 0
+    echo "Fallbacks off."
   fi
   if [ -f "$settings" ]; then
     echo "Settings"

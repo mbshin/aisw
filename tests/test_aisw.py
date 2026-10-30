@@ -915,3 +915,98 @@ def test_login_codex_falls_back_when_device_code_is_blocked(home, device_codex):
     assert (home / "codex-browser-login").exists()
     assert not (home / "browser-urls").exists()  # no device link opened
     assert "Codex: Logged in using ChatGPT" in out.stdout
+
+
+FAKE_AGY = """#!/usr/bin/env bash
+if [ "$1" = models ]; then [ -f "$HOME/agy-logged-in" ] && { echo gemini; exit 0; }; echo "Please sign in" >&2; exit 1; fi
+echo "$PWD|$*" >> "$HOME/agy.log"
+note=$(grep -o '/[^ ]*aisw-handoff[^ ]*' <<<"$*" | head -1)
+[ -n "$note" ] && cp "$note" "$HOME/agy-note.md"
+[ $# -eq 0 ] && touch "$HOME/agy-logged-in"
+exit 0
+"""
+
+
+@pytest.fixture
+def agy(home):
+    fake = home / "fake-agy"
+    fake.write_text(FAKE_AGY)
+    fake.chmod(0o755)
+    return fake
+
+
+def run_fb(home, *args, stdin="", codex=None, agy=None):
+    env = {
+        "PATH": os.environ["PATH"], "HOME": str(home), "AISW_STATE": str(home / "state"),
+        "AISW_CLAUDE": str(home / "fake-claude"), "AISW_QUIET": "1", "AISW_WAIT": "0", "TMPDIR": str(home),
+        "AISW_CODEX": str(codex or home / "no-codex"), "AISW_AGY": str(agy or home / "no-agy"),
+        "AISW_BROWSER": "/usr/bin/true",
+    }
+    return subprocess.run(
+        [str(TOOL / "aisw"), *args], input=stdin, env=env, capture_output=True, text=True, cwd=home, check=False
+    )
+
+
+def test_setup_agy_adds_it_after_codex_in_order(home, codex, agy):
+    run_fb(home, "setup", "--codex", codex=codex, agy=agy)
+    out = run_fb(home, "setup", "--agy", codex=codex, agy=agy)
+    assert out.returncode == 0, out.stderr
+    assert (home / "state" / "fallback").read_text().split() == ["codex", "agy"]
+    run_fb(home, "setup", "--agy", codex=codex, agy=agy)  # twice: still once
+    assert (home / "state" / "fallback").read_text().split() == ["codex", "agy"]
+
+
+def test_setup_agy_needs_it_installed(home):
+    out = run_fb(home, "setup", "--agy")
+    assert out.returncode == 1 and "brew install --cask antigravity-cli" in out.stderr
+    assert not (home / "state" / "fallback").exists()
+
+
+def test_unsetup_one_fallback_keeps_the_other(home, codex, agy):
+    (home / "state").mkdir(exist_ok=True)
+    (home / "state" / "fallback").write_text("codex\nagy\n")
+    run_fb(home, "unsetup", "--codex", codex=codex, agy=agy)
+    assert (home / "state" / "fallback").read_text().split() == ["agy"]
+    run_fb(home, "unsetup", "--agy", codex=codex, agy=agy)
+    assert not (home / "state" / "fallback").exists()
+
+
+def test_no_to_codex_then_yes_to_antigravity_hands_over_to_agy(home, codex, agy):
+    session(
+        home, str(home), "s-7",
+        {"type": "user", "cwd": str(home), "message": {"content": "fix the build"}},
+        {"type": "assistant", "message": {"content": [{"type": "text", "text": "Tests still red."}]}},
+    )
+    block(home, "a", "b", "c")
+    (home / "state" / "fallback").write_text("codex\nagy\n")
+    out = run_fb(home, "claude", stdin="n\ny\n", codex=codex, agy=agy)
+    assert out.returncode == 0, out.stderr
+    assert "Continue in Codex? [y/N]" in out.stderr and "Continue in Antigravity? [y/N]" in out.stderr
+    assert not (home / "codex.log").exists()
+    folder, args = (home / "agy.log").read_text().strip().split("|", 1)
+    assert folder == str(home) and args.startswith("-i ") and "hit its usage limit" in args
+    note = (home / "agy-note.md").read_text()
+    assert "fix the build" in note and "Tests still red." in note
+
+
+def test_aisw_agy_hands_over_now(home, agy):
+    session(home, str(home), "s-8", {"type": "user", "cwd": str(home), "message": {"content": "write docs"}})
+    out = run_fb(home, "agy", agy=agy)
+    assert out.returncode == 0, out.stderr
+    assert "Going on in Antigravity" in out.stdout
+    assert "write docs" in (home / "agy-note.md").read_text()
+
+
+def test_who_shows_antigravity_login_state(home, codex, agy):
+    (home / "state").mkdir(exist_ok=True)
+    (home / "state" / "fallback").write_text("codex\nagy\n")
+    lines = run_fb(home, "who", codex=codex, agy=agy).stdout.splitlines()
+    assert lines[-2:] == ["Codex (fallback): Logged in using ChatGPT", "Antigravity (fallback): Not logged in"]
+    (home / "agy-logged-in").touch()
+    assert run_fb(home, "who", codex=codex, agy=agy).stdout.splitlines()[-1] == "Antigravity (fallback): Logged in"
+
+
+def test_login_agy_runs_it_once_and_reports(home, agy):
+    out = run_fb(home, "login", "agy", agy=agy)
+    assert out.returncode == 0, out.stderr
+    assert "Antigravity: Logged in" in out.stdout

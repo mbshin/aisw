@@ -5,7 +5,7 @@
 **AI switch: keep coding when an AI agent hits its usage limit.**
 
 When one Claude account runs out, the same conversation goes on in the next free one.
-When all of them are out, it can hand the work to **Codex**.
+When all of them are out, it can hand the work to **Codex** or **Antigravity** (Google's Gemini agent).
 No token juggling, no copy-pasting context, only built-in Claude Code features.
 
 `brew install mbshin/tools/aisw`
@@ -43,13 +43,31 @@ Account B opens **the same conversation**, checks `git status` for half-done wor
 | | |
 |---|---|
 | 🔁 **Seamless handoff** | Limit hit → `/exit` → same session resumes on the next free account |
-| 🤝 **Codex fallback** | Every Claude account used up? Opt in and aisw hands the task to Codex with a handoff note |
+| 🤝 **Codex and Antigravity fallbacks** | Every Claude account used up? Opt in and aisw hands the task to Codex or Antigravity with a handoff note |
 | 📊 **Usage in the status line** | `B · 5h 72% · 7d 40%`, ⚠ at 80%, a notification at 90% (when the plan reports usage) |
 | 🖥️ **Dashboard** | `aisw ui`: all accounts, usage bars, limits; start, log in, reset with one key |
 | 🔎 **Find any conversation** | `aisw resume`: fzf over every past session, in every folder |
 | 🔑 **Safe logins** | `aisw login` (Claude) and `aisw login codex` sign in through a throwaway browser profile, so the wrong account is never reused |
 | 🧩 **Shared everything** | Settings, skills, plugins, memory and session history are shared by all accounts |
 | 🪶 **Small and readable** | A few hundred lines of bash plus one Python file; never touches login tokens |
+
+## Requirements
+
+| Need | Why | Install |
+|---|---|---|
+| **macOS** + [Homebrew](https://brew.sh) | aisw is installed with brew; notifications use macOS | – |
+| **Claude Code** | The agent aisw switches between accounts | `brew install --cask claude-code` or `curl -fsSL https://claude.ai/install.sh \| bash` |
+| **One or more Claude accounts** | Pro, Max, Team or Enterprise; aisw uses up to three (A, B, C) | – |
+| Google Chrome (recommended) | Logins open in a throwaway Chrome profile, so the wrong account isn't reused; without Chrome the normal browser opens | – |
+| `jq`, `fzf`, `uv` | Scripts, `aisw resume`, the dashboard | Installed with aisw |
+| *Optional:* **Codex** + a ChatGPT plan | First fallback when every Claude account is used up | `brew install --cask codex` |
+| *Optional:* **Antigravity CLI** (`agy`) + a Google account | Second fallback (Google's Gemini agent) | `brew install --cask antigravity-cli` |
+
+> **Why Antigravity and not Gemini CLI?** Since 18 June 2026 Gemini CLI no longer serves personal Google
+> accounts (free, AI Pro, AI Ultra); Google moved them to Antigravity CLI. Gemini CLI still works with a
+> paid Gemini API key or a Gemini Code Assist license, but aisw doesn't use it.
+
+How to install and log in to each: **[docs/HOWTO.md §1](docs/HOWTO.md#1-install)**.
 
 ## Quick start
 
@@ -58,37 +76,36 @@ brew install mbshin/tools/aisw
 aisw setup                   # makes ~/.claude-a, -b, -c and adds the status line + limit hook
 aisw login                   # log in to each account (throwaway browser window)
 aisw who                     # A: you@work.example · Work Inc (Claude Team account) / …
-echo "alias claude='aisw claude'" >> ~/.zshrc && exec zsh
-claude                       # starts on the first free account, as usual
+aisw claude                  # starts Claude on the first free account
 aisw                         # dashboard of all accounts
+# optional: echo "alias claude='aisw claude'" >> ~/.zshrc   (keep typing `claude`)
 ```
 
 Full guide: **[docs/HOWTO.md](docs/HOWTO.md)**.
 
-## `claude` or `aisw`?
+## `aisw` and the agents
 
-**`aisw` is the manager; an agent's name starts that agent.** The alias `claude='aisw claude'` lets you
-keep typing `claude` out of habit.
+**`aisw` is the manager; an agent's name starts that agent.** `claude`, `codex` and `agy` stay the plain
+tools.
 
 | You type | What runs |
 |---|---|
 | `aisw` | The dashboard (same as `aisw ui`) |
 | `aisw claude` | Picks a free account, then starts the real Claude Code |
-| `claude` | `aisw claude` (alias) |
-| `aisw codex` | Hands this folder's newest Claude session to Codex |
-| `command claude` | The real Claude Code, no switching |
+| `aisw codex` · `aisw agy` | Hands this folder's newest Claude session to Codex / Antigravity |
+| `claude`, `codex`, `agy` | The plain tools, no switching |
 
-No alias? Use `aisw claude` to start Claude. Old forms still work: `aisw a`, `aisw --resume …`
-(any args that start with `-`) mean `aisw claude …`; only plain `aisw` changed in 1.2.0.
+Optional: `alias claude='aisw claude'` lets you keep typing `claude`. Old forms still work: `aisw a`,
+`aisw --resume …` (any args that start with `-`) mean `aisw claude …`; only plain `aisw` changed in 1.2.0.
 
 ## Commands
 
-| Start Claude (`claude` = `aisw claude` with the alias) | |
+| Start Claude | |
 |---|---|
-| `claude` | First free account, A → B → C |
-| `claude a` · `claude b` · `claude c` | Force an account |
-| `claude --continue`, `--resume`, `-n name` | All normal options pass through |
-| `claude --dry-run` | Print which account would start |
+| `aisw claude` | First free account, A → B → C |
+| `aisw claude a` · `b` · `c` | Force an account |
+| `aisw claude --continue`, `--resume`, `-n name` | All normal options pass through |
+| `aisw claude --dry-run` | Print which account would start |
 
 | Manage accounts | |
 |---|---|
@@ -97,24 +114,29 @@ No alias? Use `aisw claude` to start Claude. Old forms still work: `aisw a`, `ai
 | `aisw` · `aisw ui` | Dashboard |
 | `aisw resume [words]` | Fuzzy-find any past conversation (all folders) and resume it on a free account |
 | `aisw login [a\|b\|c]` | Log in to every missing account, or one |
-| `aisw login codex` | Log in to Codex the same way (one-time code in an empty browser window) |
+| `aisw login codex` | Log in to Codex (one-time code in an empty browser window) |
+| `aisw login agy` | Log in to Antigravity (signs in on its first start) |
 | `aisw help` | All commands |
 
-**free** = not at its limit, so `claude` may use it. **no usage seen yet** = no session ran on it
+**free** = not at its limit, so `aisw claude` may use it. **no usage seen yet** = no session ran on it
 yet (numbers arrive after the first reply).
 
-## Codex fallback (opt-in)
+## Fallbacks: Codex and Antigravity (opt-in)
 
 ```zsh
-aisw login codex             # one-time code in an empty browser window
+aisw login codex             # ChatGPT account: one-time code in an empty browser window
 aisw setup --codex
+aisw login agy               # Google account: Antigravity signs in on its first start
+aisw setup --agy
 ```
 
-When every Claude account is used up, aisw asks **"Continue in Codex? [y/N]"**. On yes it writes a handoff
-note (first request, last five requests, Claude's last message, `git status` / `git diff --stat`) to a temp
-file and starts `codex` in the same folder, told to read it, check git and continue. The note is deleted
-when Codex exits. `aisw codex` does the same on demand. Codex can't read Claude's conversation, so it
-works from the note and the files, not the full history. Off again: `aisw unsetup --codex`.
+When every Claude account is used up, aisw asks for each fallback in the order you added them:
+**"Continue in Codex? [y/N]"**, then **"Continue in Antigravity? [y/N]"**. On yes it writes a handoff note
+(first request, last five requests, Claude's last message, `git status` / `git diff --stat`) to a temp file
+and starts the tool in the same folder (`codex "<prompt>"`, `agy -i "<prompt>"`), told to read it, check git
+and continue. The note is deleted when the tool exits. `aisw codex` and `aisw agy` do the same on demand.
+Neither can read Claude's conversation, so they work from the note and the files, not the full history.
+Off again: `aisw unsetup --codex` / `--agy`.
 
 ## How it works
 
