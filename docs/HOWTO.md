@@ -47,8 +47,7 @@ them in with aisw in step 3, not with `claude` itself.
 
 ```zsh
 brew install --cask codex
-aisw login codex                                # one-time code shown in Terminal
-codex login status                              # Logged in using ChatGPT
+aisw login codex                                # one-time code shown in Terminal; also turns on the fallback
 ```
 
 Needs a ChatGPT plan. The code sign-in must be allowed once: chatgpt.com → profile → **Settings →
@@ -59,8 +58,7 @@ If it's off, `aisw login codex` says so and falls back to the normal browser log
 
 ```zsh
 brew install --cask antigravity-cli             # the command is `agy`
-aisw login agy                                  # starts agy once; sign in with Google, then quit it
-agy models                                      # lists models when you're signed in
+aisw login agy                                  # sign in with Google, quit agy (Ctrl+C); also turns on the fallback
 ```
 
 **Not Gemini CLI:** since 18 June 2026 Gemini CLI no longer serves personal Google accounts (free,
@@ -208,13 +206,13 @@ Plain `claude` with `~/.claude` worked the whole time and keeps working.
 
 ## 11. Fallbacks: Codex and Antigravity
 
-Install and log in first (§1.3, §1.4), then turn them on. They're offered in the order you add them.
+Logging in (§1.3, §1.4) turns each one on; they're offered in the order you logged them in.
 
 ```zsh
-aisw setup --codex
-aisw setup --agy
-aisw who          # last lines: "Codex (fallback): …", "Antigravity (fallback): Logged in"
+aisw who          # last lines: "Codex (fallback): Logged in using ChatGPT", "Antigravity (fallback): Logged in"
 ```
+
+`aisw setup --codex` / `--agy` turn one on without a new login (if it's already signed in).
 
 | Situation | What happens |
 |---|---|

@@ -108,6 +108,13 @@ agy_status() {
   if "$AGY_BIN" models >/dev/null 2>&1; then echo "Logged in"; else echo "Not logged in"; fi
 }
 
+fallback_logged_in() {
+  case $1 in
+    codex) "$CODEX_BIN" login status 2>&1 | grep -qi "^logged in" ;;
+    agy) [ "$(agy_status)" = "Logged in" ] ;;
+  esac
+}
+
 fallback_who() {
   local tool
   for tool in $(fallbacks); do

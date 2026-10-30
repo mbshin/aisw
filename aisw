@@ -97,8 +97,14 @@ do_login() {
   export BROWSER
   BROWSER=${AISW_BROWSER:-$(dirname "$0")/signin-browser.sh} # AISW_BROWSER: tests only
   case ${1:-} in
-    codex) codex_login || code=1; codex_enabled || echo "Codex: $("$CODEX_BIN" login status 2>&1 | head -1)" ;;
-    agy) agy_login || code=1 ;;
+    codex|agy)
+      # One step: a successful login also puts the tool on the fallback list (off: aisw unsetup --codex|--agy).
+      if "${1}_login" && fallback_logged_in "$1"; then
+        fallback_enabled "$1" || { fallback_add "$1"; echo "$(tool_label "$1") added as a fallback (off: aisw unsetup --$1)."; }
+      else
+        code=1
+      fi
+      ;;
     a|b|c) login_one "$@" || code=1 ;;
     "")
       for acct in $ACCOUNTS; do
@@ -179,15 +185,15 @@ Accounts:
   aisw status                free, or used up until when (with usage %)
   aisw ui (or aisw)          dashboard (←→ select, enter start, l login, r reset, q quit)
   aisw resume [words]        find any past conversation with fzf and resume it
-  aisw login [a|b|c|codex|agy]  log in (Claude: empty browser window, email pre-filled;
-                             Codex: one-time code; Antigravity: signs in on first start)
+  aisw login [a|b|c]         log in a Claude account (empty browser window, email pre-filled)
+  aisw login codex | agy     log in Codex / Antigravity; that also makes it a fallback
 
 Setup and testing:
   aisw setup | unsetup       add / remove account folders, status line and limit hook
   aisw setup --codex | --agy turn a fallback on, in the order you add them (unsetup --codex|--agy: off)
   aisw test-hit a|b|c [dir]  pretend an account just hit its limit
 
-Fallbacks (opt-in: aisw setup --codex, --agy):
+Fallbacks (turned on by aisw login codex / agy; off: aisw unsetup --codex / --agy):
   all Claude accounts used up → asks "Continue in Codex? [y/N]", then "Continue in Antigravity? [y/N]",
   with a handoff note; aisw codex / aisw agy hand over right away
 

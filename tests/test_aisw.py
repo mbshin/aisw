@@ -894,7 +894,7 @@ def test_login_codex_opens_the_device_link_and_shows_the_code(home, device_codex
     assert out.returncode == 0, out.stderr
     assert "One-time code: AB12-CD34E" in out.stdout
     assert (home / "browser-urls").read_text().strip() == "https://auth.openai.com/codex/device"
-    assert "Codex: Logged in using ChatGPT" in out.stdout
+    assert "Codex (fallback): Logged in using ChatGPT" in out.stdout
     assert not list(home.glob("aisw-codex-login.*"))  # temp output removed
 
 
@@ -914,7 +914,7 @@ def test_login_codex_falls_back_when_device_code_is_blocked(home, device_codex):
     assert "Settings → Security" in out.stdout and "Falling back" in out.stdout
     assert (home / "codex-browser-login").exists()
     assert not (home / "browser-urls").exists()  # no device link opened
-    assert "Codex: Logged in using ChatGPT" in out.stdout
+    assert "Codex (fallback): Logged in using ChatGPT" in out.stdout
 
 
 FAKE_AGY = """#!/usr/bin/env bash
@@ -1010,3 +1010,21 @@ def test_login_agy_runs_it_once_and_reports(home, agy):
     out = run_fb(home, "login", "agy", agy=agy)
     assert out.returncode == 0, out.stderr
     assert "Antigravity: Logged in" in out.stdout
+
+
+def test_login_agy_also_adds_it_as_a_fallback(home, agy):
+    out = run_fb(home, "login", "agy", agy=agy)
+    assert out.returncode == 0, out.stderr
+    assert "Antigravity added as a fallback" in out.stdout
+    assert (home / "state" / "fallback").read_text().split() == ["agy"]
+
+
+def test_login_codex_also_adds_it_as_a_fallback(home, device_codex):
+    out = run_codex_login(home, device_codex)
+    assert out.returncode == 0, out.stderr
+    assert (home / "state" / "fallback").read_text().split() == ["codex"]
+
+
+def test_failed_login_adds_nothing(home, device_codex):
+    run_codex_login(home, device_codex, {"CODEX_LOGIN_EXIT": "1"})
+    assert not (home / "state" / "fallback").exists()

@@ -124,13 +124,12 @@ yet (numbers arrive after the first reply).
 ## Fallbacks: Codex and Antigravity (opt-in)
 
 ```zsh
-aisw login codex             # ChatGPT account: one-time code in an empty browser window
-aisw setup --codex
-aisw login agy               # Google account: Antigravity signs in on its first start
-aisw setup --agy
+aisw login codex             # ChatGPT account → Codex becomes a fallback
+aisw login agy               # Google account → Antigravity becomes a fallback
 ```
 
-When every Claude account is used up, aisw asks for each fallback in the order you added them:
+One step each: a successful login also puts the tool on the fallback list. When every Claude account is
+used up, aisw asks for each fallback in the order you logged them in:
 **"Continue in Codex? [y/N]"**, then **"Continue in Antigravity? [y/N]"**. On yes it writes a handoff note
 (first request, last five requests, Claude's last message, `git status` / `git diff --stat`) to a temp file
 and starts the tool in the same folder (`codex "<prompt>"`, `agy -i "<prompt>"`), told to read it, check git
