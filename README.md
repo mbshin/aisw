@@ -89,6 +89,7 @@ Same program. `clsw` is the tool; the alias `claude=clsw` lets you keep typing `
 | `clsw ui` | Dashboard |
 | `clsw resume [words]` | Fuzzy-find any past conversation (all folders) and resume it on a free account |
 | `clsw login [a\|b\|c]` | Log in to every missing account, or one |
+| `clsw help` | All commands |
 
 **free** = not at its limit, so `claude` may use it. **no usage seen yet** = no session ran on it
 yet (numbers arrive after the first reply).

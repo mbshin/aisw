@@ -4,6 +4,7 @@
 #
 #   clsw [claude args...]        pick an account (a first)
 #   clsw a|b|c [claude args...]  force an account
+#   clsw help | -h               this list
 #   clsw status                  show all accounts
 #   clsw who                     show who is logged in to each account
 #   clsw login [a|b|c] [args...] log in to one account, or to every account not logged in yet
@@ -145,9 +146,36 @@ pick_session() {
   exec "$0" --resume "$(basename "$f" .jsonl)"
 }
 
+show_help() {
+  cat <<'EOF2'
+clsw: keep Claude Code going on your next account when one hits its usage limit
+
+Start Claude (with `alias claude=clsw`, type claude instead of clsw):
+  clsw                       first free account, A → B → C
+  clsw a|b|c                 force an account
+  clsw --continue, --resume  any Claude Code option passes through
+  clsw --dry-run             print which account would start
+
+Accounts:
+  clsw who                   login, owner and plan of each account
+  clsw status                free, or used up until when (with usage %)
+  clsw ui                    dashboard (←→ select, enter start, l login, r reset, q quit)
+  clsw resume [words]        find any past conversation with fzf and resume it
+  clsw login [a|b|c]         log in (empty browser window, email pre-filled)
+
+Setup and testing:
+  clsw setup | unsetup       add / remove account folders, status line and limit hook
+  clsw test-hit a|b|c [dir]  pretend an account just hit its limit
+
+When a limit is hit: wait for the notification, type /exit, it goes on in the next account.
+Claude Code's own help: claude --help (or command claude --help). Docs: github.com/mbshin/clsw
+EOF2
+}
+
 dry=0
 if [ "${1:-}" = --dry-run ]; then dry=1; shift; fi
 case ${1:-} in
+  help|-h) show_help; exit 0 ;;
   status) show_status; exit 0 ;;
   who) show_who; exit 0 ;;
   login) shift; do_login "$@"; exit ;;

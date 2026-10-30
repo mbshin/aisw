@@ -289,3 +289,10 @@ def test_test_hit_marks_the_newest_session(home):
     assert out.returncode == 0, out.stderr
     handoff = json.loads((home / "state" / "handoff.json").read_text())
     assert handoff["from"] == "b" and handoff["session_id"] == "s-9"
+
+
+def test_help_lists_commands_without_starting_claude(home):
+    out = run(home, "clsw", "help")
+    assert out.returncode == 0
+    assert "clsw resume" in out.stdout and "clsw test-hit" in out.stdout
+    assert not (home / "calls.log").exists()
