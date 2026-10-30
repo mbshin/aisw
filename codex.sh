@@ -81,3 +81,34 @@ codex_who() {
   codex_enabled || return 0
   echo "Codex (fallback): $("$CODEX_BIN" login status 2>&1 | head -1)"
 }
+
+# aisw login codex: device-code sign-in (link + one-time code), the link opened in the same empty
+# browser window as Claude logins, so the browser's current ChatGPT login is not reused.
+codex_login() {
+  local out pid url code rc i
+  command -v "$CODEX_BIN" >/dev/null || { echo "Codex not found: brew install codex" >&2; return 1; }
+  out=$(mktemp "${TMPDIR:-/tmp}/aisw-codex-login.XXXXXX")
+  "$CODEX_BIN" login --device-auth > "$out" 2>&1 &
+  pid=$!
+  for i in $(seq 1 100); do # up to ~20 s for the link and the code
+    url=$(tr -d '\033' < "$out" | grep -oE 'https://[A-Za-z0-9./_-]+' | head -1)
+    code=$(tr -d '\033' < "$out" | grep -oE '[A-Z0-9]{4}-[A-Z0-9]{4,6}' | head -1)
+    [ -n "$url" ] && [ -n "$code" ] && break
+    kill -0 "$pid" 2>/dev/null || break
+    sleep 0.2
+  done
+  if [ -z "$url" ] || [ -z "$code" ]; then
+    cat "$out" >&2
+    kill "$pid" 2>/dev/null
+    rm -f "$out"
+    return 1
+  fi
+  echo "== Codex: sign in with your ChatGPT account in the new browser window"
+  echo "   One-time code: $code   (expires in 15 minutes)"
+  "$BROWSER" "$url"
+  wait "$pid"
+  rc=$?
+  close_signin_browser
+  rm -f "$out"
+  return $rc
+}

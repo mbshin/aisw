@@ -47,7 +47,7 @@ Account B opens **the same conversation**, checks `git status` for half-done wor
 | 📊 **Usage in the status line** | `B · 5h 72% · 7d 40%`, ⚠ at 80%, a notification at 90% (when the plan reports usage) |
 | 🖥️ **Dashboard** | `aisw ui`: all accounts, usage bars, limits; start, log in, reset with one key |
 | 🔎 **Find any conversation** | `aisw resume`: fzf over every past session, in every folder |
-| 🔑 **Safe logins** | `aisw login` signs in through a throwaway browser profile, so the wrong account is never reused |
+| 🔑 **Safe logins** | `aisw login` (Claude) and `aisw login codex` sign in through a throwaway browser profile, so the wrong account is never reused |
 | 🧩 **Shared everything** | Settings, skills, plugins, memory and session history are shared by all accounts |
 | 🪶 **Small and readable** | A few hundred lines of bash plus one Python file; never touches login tokens |
 
@@ -97,6 +97,7 @@ No alias? Use `aisw claude` to start Claude. Old forms still work: `aisw a`, `ai
 | `aisw` · `aisw ui` | Dashboard |
 | `aisw resume [words]` | Fuzzy-find any past conversation (all folders) and resume it on a free account |
 | `aisw login [a\|b\|c]` | Log in to every missing account, or one |
+| `aisw login codex` | Log in to Codex the same way (one-time code in an empty browser window) |
 | `aisw help` | All commands |
 
 **free** = not at its limit, so `claude` may use it. **no usage seen yet** = no session ran on it
@@ -105,7 +106,8 @@ yet (numbers arrive after the first reply).
 ## Codex fallback (opt-in)
 
 ```zsh
-aisw setup --codex           # needs the Codex CLI, logged in
+aisw login codex             # one-time code in an empty browser window
+aisw setup --codex
 ```
 
 When every Claude account is used up, aisw asks **"Continue in Codex? [y/N]"**. On yes it writes a handoff

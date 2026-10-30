@@ -840,3 +840,60 @@ def test_test_hit_without_sessions_says_so(home):
     out = run(home, "aisw", "test-hit", "a", str(home / "work"))
     assert out.returncode == 1 and "No session found" in out.stderr
     assert not (home / "state" / "handoff.json").exists()
+
+
+FAKE_CODEX_DEVICE = """#!/usr/bin/env bash
+if [ "$1 $2" = "login --device-auth" ]; then
+  printf 'Follow these steps\\n1. Open this link\\n   \\033[94mhttps://auth.openai.com/codex/device\\033[0m\\n'
+  printf '2. Enter this one-time code\\n   \\033[1mAB12-CD34E\\033[0m\\n'
+  sleep 0.5
+  touch "$HOME/codex-logged-in"
+  exit "${CODEX_LOGIN_EXIT:-0}"
+fi
+if [ "$1 $2" = "login status" ]; then
+  [ -f "$HOME/codex-logged-in" ] && echo "Logged in using ChatGPT" || echo "Not logged in"
+  exit 0
+fi
+"""
+
+
+@pytest.fixture
+def device_codex(home):
+    fake = home / "fake-codex-device"
+    fake.write_text(FAKE_CODEX_DEVICE)
+    fake.chmod(0o755)
+    browser = home / "fake-browser"
+    browser.write_text('#!/usr/bin/env bash\necho "$1" >> "$HOME/browser-urls"\n')
+    browser.chmod(0o755)
+    return fake, browser
+
+
+def run_codex_login(home, device_codex, extra_env=None):
+    fake, browser = device_codex
+    env = {
+        "PATH": os.environ["PATH"], "HOME": str(home), "AISW_STATE": str(home / "state"),
+        "AISW_CLAUDE": str(home / "fake-claude"), "AISW_QUIET": "1", "AISW_CODEX": str(fake),
+        "AISW_BROWSER": str(browser), "TMPDIR": str(home), **(extra_env or {}),
+    }
+    return subprocess.run(
+        [str(TOOL / "aisw"), "login", "codex"], env=env, capture_output=True, text=True, cwd=home, check=False
+    )
+
+
+def test_login_codex_opens_the_device_link_and_shows_the_code(home, device_codex):
+    out = run_codex_login(home, device_codex)
+    assert out.returncode == 0, out.stderr
+    assert "One-time code: AB12-CD34E" in out.stdout
+    assert (home / "browser-urls").read_text().strip() == "https://auth.openai.com/codex/device"
+    assert "Codex: Logged in using ChatGPT" in out.stdout
+    assert not list(home.glob("aisw-codex-login.*"))  # temp output removed
+
+
+def test_login_codex_failure_exits_non_zero(home, device_codex):
+    out = run_codex_login(home, device_codex, {"CODEX_LOGIN_EXIT": "1"})
+    assert out.returncode == 1
+
+
+def test_login_codex_without_codex_installed(home, device_codex):
+    out = run_codex_login(home, device_codex, {"AISW_CODEX": str(home / "no-such-codex")})
+    assert out.returncode == 1 and "Codex not found" in out.stderr

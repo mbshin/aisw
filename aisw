@@ -13,7 +13,7 @@
 #   aisw help | -h               this list
 #   aisw status                  show all accounts
 #   aisw who                     show who is logged in to each account
-#   aisw login [a|b|c] [args...] log in to one account, or to every account not logged in yet
+#   aisw login [a|b|c|codex] ...  log in to one account (or Codex), or to every account not logged in yet
 #   aisw ui | u                  dashboard of the three accounts (start, login, reset limit)
 #   aisw resume [words]          pick a past conversation (any folder) with fzf, resume it on a free account
 #   aisw setup | unsetup         make the account folders + status line + limit hook / take them out again
@@ -95,8 +95,9 @@ do_login() {
   local acct code=0
   # The sign-in page opens in an empty browser profile, so no existing Claude login is reused.
   export BROWSER
-  BROWSER="$(dirname "$0")/signin-browser.sh"
+  BROWSER=${AISW_BROWSER:-$(dirname "$0")/signin-browser.sh} # AISW_BROWSER: tests only
   case ${1:-} in
+    codex) codex_login || code=1; codex_enabled || echo "Codex: $("$CODEX_BIN" login status 2>&1 | head -1)" ;;
     a|b|c) login_one "$@" || code=1 ;;
     "")
       for acct in $ACCOUNTS; do
@@ -104,9 +105,10 @@ do_login() {
         login_one "$acct" || return 1
       done
       ;;
-    *) echo "usage: aisw login [a|b|c] [claude auth login args...]" >&2; return 1 ;;
+    *) echo "usage: aisw login [a|b|c|codex] [claude auth login args...]" >&2; return 1 ;;
   esac
   show_who
+  codex_who
   return $code
 }
 
@@ -176,7 +178,7 @@ Accounts:
   aisw status                free, or used up until when (with usage %)
   aisw ui (or aisw)          dashboard (←→ select, enter start, l login, r reset, q quit)
   aisw resume [words]        find any past conversation with fzf and resume it
-  aisw login [a|b|c]         log in (empty browser window, email pre-filled)
+  aisw login [a|b|c|codex]   log in (empty browser window; Claude: email pre-filled, Codex: one-time code)
 
 Setup and testing:
   aisw setup | unsetup       add / remove account folders, status line and limit hook

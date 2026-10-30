@@ -173,7 +173,8 @@ Plain `claude` with `~/.claude` worked the whole time and keeps working.
 ## 11. Codex fallback
 
 ```zsh
-brew install codex && codex login     # if you don't have it yet
+brew install codex                    # if you don't have it yet
+aisw login codex                      # code shown in Terminal, sign-in in an empty browser window
 aisw setup --codex
 ```
 
