@@ -58,12 +58,15 @@ def test_gauge_and_countdown():
     assert ui.gauge(96, width=4).startswith("[$error]")
     assert ui.countdown(1000 + 3 * 3600 + 12 * 60, 1000) == "3h 12m"
     assert ui.countdown(1000 + 5 * 60, 1000) == "5m"
+    assert ui.countdown(1000 + 59 * 60 + 59, 1000) == "59m"  # under an hour: minutes only
+    assert ui.countdown(1000 + 3600, 1000) == "1h 00m"
+    assert ui.countdown(900, 1000) == "0m"  # already past
 
 
-def run_app(home, state, claude, result, keys, check=None):
+def run_app(home, state, claude, result, keys, check=None, size=(120, 30)):
     async def go():
         app = ui.AiswUI(home, state, claude, result)
-        async with app.run_test() as pilot:
+        async with app.run_test(size=size) as pilot:
             await app.workers.wait_for_complete()
             await pilot.pause()
             for key in keys:
@@ -109,3 +112,55 @@ def test_reset_clears_the_limit_after_yes(env):
     assert limit.exists()  # dialog open, nothing pressed yet
     run_app(home, state, claude, None, ["r", "enter"])
     assert not limit.exists()
+
+
+def selected_after(env, keys):
+    home, state, claude = env
+    seen = []
+    run_app(home, state, claude, None, keys, lambda app: seen.append(app.focused.acct))
+    return seen[0]
+
+
+def test_left_and_right_wrap_around(env):
+    assert selected_after(env, ["left"]) == "c"
+    assert selected_after(env, ["right", "right", "right"]) == "a"
+    assert selected_after(env, ["up"]) == "c"
+
+
+@pytest.mark.parametrize(("width", "narrow"), [(80, True), (89, True), (90, False), (120, False)])
+def test_narrow_terminal_stacks_the_cards(env, width, narrow):
+    home, state, claude = env
+    seen = []
+    run_app(home, state, claude, None, [], lambda app: seen.append(app.query_one("#cards").has_class("narrow")),
+            size=(width, 40))
+    assert seen == [narrow]
+
+
+def test_quit_writes_no_result(env):
+    home, state, claude = env
+    result = home / "result"
+    run_app(home, state, claude, result, ["q"])
+    assert not result.exists()
+
+
+def test_reset_without_a_limit_only_shows_a_notice(env):
+    home, state, claude = env
+    before = sorted(p.name for p in state.iterdir())
+    seen = {}
+
+    def check(app):
+        seen["confirm"] = isinstance(app.screen, ui.Confirm)
+        seen["notices"] = [n.message for n in app._notifications]
+
+    run_app(home, state, claude, None, ["r"], check)
+    assert not seen["confirm"]
+    assert seen["notices"] == ["A has no limit mark."]
+    assert sorted(p.name for p in state.iterdir()) == before
+
+
+def test_reset_no_keeps_the_limit(env):
+    home, state, claude = env
+    limit = state / "b.limit"
+    limit.write_text(str(int(time.time()) + 600))
+    run_app(home, state, claude, None, ["down", "r", "tab", "enter"])  # tab to No
+    assert limit.exists()

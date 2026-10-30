@@ -92,20 +92,22 @@ login_one() {
 }
 
 do_login() {
-  local acct
+  local acct code=0
   # The sign-in page opens in an empty browser profile, so no existing Claude login is reused.
   export BROWSER
   BROWSER="$(dirname "$0")/signin-browser.sh"
   case ${1:-} in
-    a|b|c) login_one "$@" ;;
-    *)
+    a|b|c) login_one "$@" || code=1 ;;
+    "")
       for acct in $ACCOUNTS; do
         show_who | grep -q "^$(upper "$acct"): not logged in" || continue
         login_one "$acct" || return 1
       done
       ;;
+    *) echo "usage: aisw login [a|b|c] [claude auth login args...]" >&2; return 1 ;;
   esac
   show_who
+  return $code
 }
 
 # AISW_UI replaces the dashboard command, for tests.

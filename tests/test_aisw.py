@@ -20,11 +20,14 @@ acct=$(basename "$CLAUDE_CONFIG_DIR")
 if [ "$1" = auth ]; then
   case $2 in
     status) if [ -f "$CLAUDE_CONFIG_DIR/login" ]; then
-              printf 'Login method: Claude Team account\nOrganization: Example Inc\nEmail: %s\n' \
-                "$(cat "$CLAUDE_CONFIG_DIR/login")"
+              echo "Login method: Claude Team account"
+              org=$(cat "$CLAUDE_CONFIG_DIR/org" 2>/dev/null || echo "Example Inc")
+              [ -n "$org" ] && echo "Organization: $org"
+              echo "Email: $(cat "$CLAUDE_CONFIG_DIR/login")"
             else echo "Not logged in."; fi ;;
     login) echo "$acct $*" >> "$HOME/logins.log"
            echo "$BROWSER" >> "$HOME/browser.log"
+           [ -f "$HOME/login-fails" ] && exit 1
            echo "user-${acct#.claude-}@x" > "$CLAUDE_CONFIG_DIR/login" ;;
   esac
   exit 0
@@ -34,6 +37,9 @@ if grep -qx "${acct#.claude-}" "$HOME/hits" 2>/dev/null; then
   echo '{"session_id": "s-123", "cwd": "'"$HOME/work"'", "hook_event_name": "StopFailure"}' \\
     | "$TOOL/on-limit.sh"
 fi
+# A scripted handoff note (e.g. from another account), copied in during the run.
+if [ -f "$HOME/fake-handoff" ]; then cp "$HOME/fake-handoff" "$AISW_STATE/handoff.json"; fi
+exit "$(cat "$HOME/exit-code" 2>/dev/null || echo 0)"
 """
 
 
@@ -48,16 +54,19 @@ def home(tmp_path):
     return tmp_path
 
 
-def run(home, script, *args, stdin="", account=None, tmpdir=None, fzf=None, codex=None, ui=None):
+def run(home, script, *args, stdin="", account=None, tmpdir=None, fzf=None, codex=None, ui=None, cwd=None,
+        quiet=True):
     env = {
-        "PATH": os.environ["PATH"],
+        # $HOME/bin first, for fakes such as osascript.
+        "PATH": f"{home}/bin:{os.environ['PATH']}",
         "HOME": str(home),
         "TOOL": str(TOOL),
         "AISW_STATE": str(home / "state"),
         "AISW_CLAUDE": str(home / "fake-claude"),
-        "AISW_QUIET": "1",
         "AISW_WAIT": "0",
     }
+    if quiet:
+        env["AISW_QUIET"] = "1"
     if tmpdir:
         env["TMPDIR"] = str(tmpdir)
     if fzf:
@@ -69,12 +78,13 @@ def run(home, script, *args, stdin="", account=None, tmpdir=None, fzf=None, code
     if account:
         env["CLAUDE_CONFIG_DIR"] = str(home / f".claude-{account}")
     return subprocess.run(
-        [str(TOOL / script), *args], input=stdin, env=env, capture_output=True, text=True, cwd=home, check=False
+        [str(TOOL / script), *args], input=stdin, env=env, capture_output=True, text=True, cwd=cwd or home,
+        check=False,
     )
 
 
-def usage(five, seven, resets_in=3600):
-    reset = int(time.time()) + resets_in
+def usage(five, seven, resets_in=3600, reset=None):
+    reset = reset or int(time.time()) + resets_in
     return json.dumps(
         {
             "session_id": "s-1",
@@ -399,7 +409,7 @@ if [ "$1 $2" = "login status" ]; then echo "Logged in using ChatGPT"; exit 0; fi
 echo "$PWD|$*" >> "$HOME/codex.log"
 note=$(grep -o '/[^ ]*aisw-handoff[^ ]*' <<<"$*" | head -1)
 [ -n "$note" ] && cp "$note" "$HOME/note.md"
-exit 0
+exit "$(cat "$HOME/codex-exit" 2>/dev/null || echo 0)"
 """
 
 
@@ -452,3 +462,381 @@ def test_no_codex_question_when_fallback_is_off(home, codex):
     block(home, "a", "b", "c")
     out = run(home, "aisw", "claude", stdin="y\n", codex=codex)
     assert out.returncode == 1 and "Codex" not in out.stderr
+
+
+# ---- Switch rules (common.sh): which account counts as used up, and until when ----
+
+
+def hhmm(t):
+    return time.strftime("%a %H:%M", time.localtime(t))
+
+
+def write_usage(home, acct, five, seven, r5=None, r7=None):
+    t = int(time.time())
+    r5, r7 = r5 or t + 2 * 3600, r7 or t + 3 * 86400
+    (home / "state").mkdir(exist_ok=True)
+    data = {"five_hour": {"used_percentage": five, "resets_at": r5}, "seven_day": {"used_percentage": seven, "resets_at": r7}}
+    (home / "state" / f"{acct}.usage.json").write_text(json.dumps(data))
+    return r5, r7
+
+
+def picked(home):
+    """The account aisw claude would start on, or None."""
+    out = run(home, "aisw", "claude", "--dry-run").stdout.strip()
+    return out.split("/.claude-")[1][0] if out else None
+
+
+def status_of(home, acct):
+    lines = run(home, "aisw", "status").stdout.splitlines()
+    return next(line for line in lines if line.startswith(acct.upper() + ":"))
+
+
+def test_five_hour_at_95_blocks_until_its_reset(home):
+    r5, _ = write_usage(home, "a", 95, 10)
+    assert status_of(home, "a") == f"A: used up until {hhmm(r5)}"
+    assert picked(home) == "b"
+
+
+def test_five_hour_at_94_is_still_free(home):
+    write_usage(home, "a", 94, 10)
+    assert status_of(home, "a") == "A: free (5h 94% · 7d 10%)"
+    assert picked(home) == "a"
+
+
+def test_seven_day_at_98_blocks_until_its_reset(home):
+    _, r7 = write_usage(home, "a", 10, 98)
+    assert status_of(home, "a") == f"A: used up until {hhmm(r7)}"
+    assert picked(home) == "b"
+
+
+def test_a_limit_in_the_past_counts_as_free(home):
+    (home / "state").mkdir()
+    (home / "state" / "a.limit").write_text(str(int(time.time()) - 60))
+    assert status_of(home, "a") == "A: free (no usage seen yet)"
+    assert picked(home) == "a"
+
+
+def test_the_later_of_limit_file_and_usage_reset_wins(home):
+    t = int(time.time())
+    r5, _ = write_usage(home, "a", 96, 10, r5=t + 7200)
+    (home / "state" / "a.limit").write_text(str(t + 600))
+    assert status_of(home, "a") == f"A: used up until {hhmm(r5)}"
+    (home / "state" / "a.limit").write_text(str(t + 3 * 86400 + 600))
+    assert status_of(home, "a") == f"A: used up until {hhmm(t + 3 * 86400 + 600)}"
+
+
+@pytest.mark.parametrize(
+    ("blocked", "expected"), [((), "a"), (("a",), "b"), (("b",), "a"), (("a", "c"), "b"), (("a", "b", "c"), None)]
+)
+def test_pick_order_is_a_b_c_skipping_used_up(home, blocked, expected):
+    block(home, *blocked)
+    assert picked(home) == expected
+
+
+# ---- Status line ----
+
+
+@pytest.fixture
+def osascript(home):
+    """Fake osascript on PATH: notifications land in $HOME/notify.log (use run(..., quiet=False))."""
+    (home / "bin").mkdir()
+    fake = home / "bin" / "osascript"
+    fake.write_text('#!/usr/bin/env bash\necho "$2" >> "$HOME/notify.log"\n')
+    fake.chmod(0o755)
+    return home / "notify.log"
+
+
+def test_statusline_no_warning_below_80(home):
+    assert run(home, "statusline.sh", stdin=usage(79.9, 79), account="a").stdout.strip() == "A · 5h 79% · 7d 79%"
+
+
+@pytest.mark.parametrize(("five", "seven"), [(80, 10), (10, 80)])
+def test_statusline_warns_at_exactly_80(home, five, seven):
+    assert run(home, "statusline.sh", stdin=usage(five, seven), account="a").stdout.strip().endswith("⚠")
+
+
+def test_statusline_notifies_once_per_five_hour_window(home, osascript):
+    window = int(time.time()) + 3600
+    run(home, "statusline.sh", stdin=usage(91, 10, reset=window), account="b", quiet=False)
+    assert len(osascript.read_text().splitlines()) == 1
+    assert "Account B at 91% of its 5-hour limit" in osascript.read_text()
+    warned = (home / "state" / "b.warned").read_text().strip()
+    run(home, "statusline.sh", stdin=usage(93, 10, reset=window), account="b", quiet=False)
+    assert len(osascript.read_text().splitlines()) == 1  # same window: no second notification
+    run(home, "statusline.sh", stdin=usage(92, 10, reset=window + 5 * 3600), account="b", quiet=False)
+    assert len(osascript.read_text().splitlines()) == 2  # next window
+    assert (home / "state" / "b.warned").read_text().strip() != warned
+
+
+def test_statusline_no_notification_below_90(home, osascript):
+    run(home, "statusline.sh", stdin=usage(89, 10), account="a", quiet=False)
+    assert not osascript.exists()
+    assert not (home / "state" / "a.warned").exists()
+
+
+def test_statusline_for_plain_claude_shows_main(home):
+    out = run(home, "statusline.sh", stdin=usage(50, 20))
+    assert out.stdout.strip() == "main · 5h 50% · 7d 20%"
+    assert (home / "state" / "default.usage.json").exists()
+
+
+# ---- Limit hook (on-limit.sh) ----
+
+
+def test_limit_hook_without_usage_guesses_five_hours(home):
+    t = time.time()
+    run(home, "on-limit.sh", stdin='{"session_id": "s-1", "cwd": "/tmp"}', account="a")
+    assert abs(int((home / "state" / "a.limit").read_text()) - (t + 18000)) < 5
+
+
+def test_limit_hook_uses_the_known_five_hour_reset(home):
+    r5, _ = write_usage(home, "a", 60, 10)  # under 95%: not yet used up by the numbers
+    run(home, "on-limit.sh", stdin='{"session_id": "s-1", "cwd": "/tmp"}', account="a")
+    assert int((home / "state" / "a.limit").read_text()) == r5
+
+
+def test_limit_hook_with_a_past_reset_guesses(home):
+    write_usage(home, "a", 60, 10, r5=int(time.time()) - 60)
+    t = time.time()
+    run(home, "on-limit.sh", stdin='{"session_id": "s-1", "cwd": "/tmp"}', account="a")
+    assert abs(int((home / "state" / "a.limit").read_text()) - (t + 18000)) < 5
+
+
+def test_limit_hook_handoff_fields_and_notification(home, osascript):
+    t = time.time()
+    run(home, "on-limit.sh", stdin='{"session_id": "s-42", "cwd": "/w"}', account="b", quiet=False)
+    handoff = json.loads((home / "state" / "handoff.json").read_text())
+    assert (handoff["from"], handoff["session_id"], handoff["cwd"]) == ("b", "s-42", "/w")
+    assert abs(handoff["at"] - t) < 5
+    assert "Account B hit its limit" in osascript.read_text() and "/exit" in osascript.read_text()
+
+
+# ---- Handoff loop in the wrapper ----
+
+
+def fake_handoff(home, frm, at_offset=60):
+    (home / "fake-handoff").write_text(
+        json.dumps({"from": frm, "at": int(time.time()) + at_offset, "session_id": "s-x", "cwd": str(home)})
+    )
+
+
+def test_handoff_from_another_account_is_ignored(home):
+    (home / "hits").write_text("")
+    fake_handoff(home, "a")
+    out = run(home, "aisw", "claude", "b")
+    assert out.returncode == 0, out.stderr
+    assert len((home / "calls.log").read_text().splitlines()) == 1
+    assert not (home / "state" / "handoff.json").exists()
+
+
+def test_handoff_when_the_rest_is_used_up_prints_resume_and_keeps_the_exit_code(home):
+    block(home, "b", "c")
+    (home / "exit-code").write_text("7")
+    out = run(home, "aisw", "claude")
+    assert out.returncode == 7
+    assert "All accounts are at their limit" in out.stderr
+    assert "Resume later with: aisw claude --resume s-123" in out.stderr
+    assert len((home / "calls.log").read_text().splitlines()) == 1
+
+
+def test_switch_message_names_the_next_account(home):
+    block(home, "a")
+    (home / "hits").write_text("b\n")
+    out = run(home, "aisw", "claude")
+    assert "B hit its limit. Going on in C in 0s (Ctrl+C to stop)..." in out.stdout
+
+
+def test_missing_account_folder_says_run_setup(home):
+    (home / ".claude-b").rmdir()
+    out = run(home, "aisw", "b")
+    assert out.returncode == 1 and "run aisw setup" in out.stderr
+
+
+# ---- Login and who ----
+
+
+def test_login_with_all_logged_in_logs_nothing_in(home):
+    for acct in "abc":
+        (home / f".claude-{acct}" / "login").write_text(f"{acct}@x\n")
+    out = run(home, "aisw", "login")
+    assert out.returncode == 0, out.stderr
+    assert not (home / "logins.log").exists()
+    assert len(out.stdout.splitlines()) == 3
+
+
+def test_login_unknown_slot_is_a_usage_error(home):
+    out = run(home, "aisw", "login", "x")
+    assert out.returncode == 1 and "usage: aisw login" in out.stderr
+    assert not (home / "logins.log").exists()
+
+
+def test_failed_login_keeps_the_saved_email_and_fails(home):
+    (home / "state").mkdir()
+    (home / "state" / "b.email").write_text("saved-b@x\n")
+    (home / "login-fails").write_text("")
+    out = run(home, "aisw", "login", "b")
+    assert out.returncode != 0
+    assert (home / "state" / "b.email").read_text() == "saved-b@x\n"
+
+
+def test_failed_login_writes_no_email_file(home):
+    (home / "login-fails").write_text("")
+    out = run(home, "aisw", "login", "c")
+    assert out.returncode != 0
+    assert not (home / "state" / "c.email").exists()
+
+
+def test_who_shows_a_personal_plan_as_personal(home):
+    (home / ".claude-a" / "login").write_text("me@x\n")
+    (home / ".claude-a" / "org").write_text("me@x's Organization\n")
+    assert run(home, "aisw", "who").stdout.splitlines()[0] == "A: me@x · personal (Claude Team account)"
+
+
+def test_who_without_organization_has_no_dot(home):
+    (home / ".claude-a" / "login").write_text("me@x\n")
+    (home / ".claude-a" / "org").write_text("")
+    assert run(home, "aisw", "who").stdout.splitlines()[0] == "A: me@x (Claude Team account)"
+
+
+# ---- Resume ----
+
+
+def fzf_fake(home, body):
+    fake = home / "fake-fzf"
+    fake.write_text("#!/usr/bin/env bash\n" + body + "\n")
+    fake.chmod(0o755)
+    return fake
+
+
+def test_resume_with_no_sessions_starts_nothing(home):
+    fzf = fzf_fake(home, 'cat > "$HOME/fzf-input"; exit 1')  # fzf on empty input: no pick
+    out = run(home, "aisw", "resume", fzf=fzf)
+    assert out.returncode != 0
+    assert (home / "fzf-input").read_text() == ""
+    assert not (home / "calls.log").exists()
+
+
+def test_resume_of_a_deleted_folder_says_so(home):
+    gone = str(home / "gone")
+    session(home, gone, "s-1", {"type": "user", "cwd": gone, "message": {"content": "hi"}})
+    out = run(home, "aisw", "resume", fzf=fzf_fake(home, "head -1"))
+    assert out.returncode != 0
+    assert f"Folder is gone: {gone}" in out.stderr
+    assert not (home / "calls.log").exists()
+
+
+def test_resume_passes_the_words_as_fzf_query(home):
+    fzf = fzf_fake(home, 'printf "%s\\n" "$@" > "$HOME/fzf-args"; exit 1')
+    run(home, "aisw", "resume", "fix", "login", fzf=fzf)
+    assert "--query=fix login" in (home / "fzf-args").read_text().splitlines()
+
+
+def test_resume_lists_no_message_for_meta_only_sessions(home):
+    work = str(home / "work")
+    session(
+        home, work, "s-meta",
+        {"type": "user", "cwd": work, "isMeta": True, "message": {"content": "meta"}},
+        {"type": "user", "cwd": work, "message": {"content": "<command-name>/clear</command-name>"}},
+    )
+    run(home, "aisw", "resume", fzf=fzf_fake(home, 'cat > "$HOME/fzf-input"; exit 1'))
+    assert "(no message)" in (home / "fzf-input").read_text()
+
+
+# ---- Codex ----
+
+
+def test_codex_fallback_without_a_session_starts_plain_codex(home, codex):
+    block(home, "a", "b", "c")
+    (home / "state" / "fallback").write_text("codex\n")
+    out = run(home, "aisw", "claude", stdin="y\n", codex=codex)
+    assert out.returncode == 0, out.stderr
+    assert (home / "codex.log").read_text() == f"{home}|\n"
+
+
+def test_codex_missing_is_a_clear_error(home):
+    out = run(home, "aisw", "codex", codex=home / "no-such-codex")
+    assert out.returncode == 1 and "Codex not found" in out.stderr
+
+
+def test_aisw_codex_hands_over_the_newest_session(home, codex):
+    old = {"type": "user", "cwd": str(home), "message": {"content": "old task"}}
+    new = {"type": "user", "cwd": str(home), "message": {"content": "new task"}}
+    session(home, str(home), "s-old", old)
+    session(home, str(home), "s-new", new)
+    proj = home / ".claude" / "projects" / str(home).replace("/", "-")
+    os.utime(proj / "s-old.jsonl", (time.time() - 600, time.time() - 600))
+    out = run(home, "aisw", "codex", codex=codex, tmpdir=home)
+    assert out.returncode == 0, out.stderr
+    note = (home / "note.md").read_text()
+    assert "new task" in note and "old task" not in note
+
+
+def test_codex_note_has_repo_state_only_in_a_git_repo(home, codex):
+    repo = home / "repo"
+    repo.mkdir()
+    for folder, in_git in ((home / "work", False), (repo, True)):
+        if in_git:
+            subprocess.run(["git", "init", "-q", str(repo)], check=True)
+            (repo / "new.txt").write_text("x")
+        session(home, str(folder), "s-1", {"type": "user", "cwd": str(folder), "message": {"content": "task"}})
+        run(home, "aisw", "codex", codex=codex, tmpdir=home, cwd=folder)
+        note = (home / "note.md").read_text()
+        assert ("## Repo state" in note) == in_git
+    assert "?? new.txt" in note
+
+
+def test_codex_note_is_removed_when_codex_fails(home, codex):
+    session(home, str(home), "s-1", {"type": "user", "cwd": str(home), "message": {"content": "task"}})
+    (home / "codex-exit").write_text("3")
+    out = run(home, "aisw", "codex", codex=codex, tmpdir=home)
+    assert out.returncode == 3
+    assert (home / "note.md").exists()
+    assert not list(home.glob("aisw-handoff.*"))
+
+
+# ---- Setup, unsetup, test-hit ----
+
+
+def test_setup_creates_settings_when_missing(home):
+    out = run(home, "aisw", "setup")
+    assert out.returncode == 0, out.stderr
+    settings = json.loads((home / ".claude" / "settings.json").read_text())
+    assert settings["statusLine"]["command"] == f"{TOOL}/statusline.sh"
+
+
+def test_unsetup_with_nothing_set_up(home):
+    out = run(home, "aisw", "unsetup")
+    assert out.returncode == 0, out.stderr
+    assert not (home / ".zshrc").exists()
+
+
+def test_unsetup_keeps_a_users_own_status_line(home):
+    (home / ".claude").mkdir()
+    mine = {"statusLine": {"type": "command", "command": "/home/me/statusline.sh"}}
+    (home / ".claude" / "settings.json").write_text(json.dumps(mine))
+    run(home, "aisw", "unsetup")
+    assert json.loads((home / ".claude" / "settings.json").read_text()) == mine
+
+
+@pytest.mark.parametrize(
+    ("lib", "expected"),
+    [("hb/Cellar/aisw/1.2.0/libexec", "hb/opt/aisw/libexec"), ("src/aisw", "src/aisw")],
+)
+def test_lib_dir_uses_homebrews_stable_path(home, lib, expected):
+    (home / lib).mkdir(parents=True)
+    out = subprocess.run(
+        ["bash", "-c", '. "$1"; lib_dir', str(home / lib / "aisw"), str(TOOL / "admin.sh")],
+        capture_output=True, text=True, check=True,
+    )
+    assert out.stdout.strip() == str(home / expected)
+
+
+def test_test_hit_bad_slot_is_a_usage_error(home):
+    out = run(home, "aisw", "test-hit", "x")
+    assert out.returncode == 1 and "usage: aisw test-hit" in out.stderr
+
+
+def test_test_hit_without_sessions_says_so(home):
+    out = run(home, "aisw", "test-hit", "a", str(home / "work"))
+    assert out.returncode == 1 and "No session found" in out.stderr
+    assert not (home / "state" / "handoff.json").exists()
