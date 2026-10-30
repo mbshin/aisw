@@ -16,7 +16,7 @@ class Aisw < Formula
     # An exec script, not a symlink, so `dirname "$0"` in aisw still finds common.sh.
     bin.write_exec_script libexec/"aisw"
     # Old name (until 1.0.x), kept so existing aliases and habits keep working.
-    (bin/"clsw").write_exec_script libexec/"aisw"
+    bin.install_symlink "aisw" => "clsw"
   end
 
   def caveats
@@ -31,5 +31,6 @@ class Aisw < Formula
 
   test do
     assert_match "A: free", shell_output("#{bin}/aisw status")
+    assert_match "A: free", shell_output("#{bin}/clsw status")
   end
 end
