@@ -97,9 +97,9 @@ do_login() {
   export BROWSER
   BROWSER=${AISW_BROWSER:-$(dirname "$0")/signin-browser.sh} # AISW_BROWSER: tests only
   case ${1:-} in
-    codex|agy)
+    codex|codex[1-9]|agy)
       # One step: a successful login also puts the tool on the fallback list (off: aisw unsetup --codex|--agy).
-      if "${1}_login" && fallback_logged_in "$1"; then
+      if "$(tool_base "$1")_login" "$1" && fallback_logged_in "$1"; then
         fallback_enabled "$1" || { fallback_add "$1"; echo "$(tool_label "$1") added as a fallback (off: aisw unsetup --$1)."; }
       else
         code=1
@@ -112,7 +112,7 @@ do_login() {
         login_one "$acct" || return 1
       done
       ;;
-    *) echo "usage: aisw login [a|b|c|codex|agy] [claude auth login args...]" >&2; return 1 ;;
+    *) echo "usage: aisw login [a|b|c|codex|codex2…|agy] [claude auth login args...]" >&2; return 1 ;;
   esac
   show_who
   fallback_who
@@ -177,7 +177,7 @@ aisw alone: dashboard. Start agents:
   aisw claude a|b|c          force an account
   aisw claude --continue     any Claude Code option passes through (--resume, -n name, ...)
   aisw claude --dry-run      print which account would start
-  aisw codex | agy           hand this folder's newest Claude session to Codex / Antigravity now
+  aisw codex | codex2 | agy  hand this folder's newest Claude session to Codex / Antigravity now
   (alias claude='aisw claude' lets you type claude instead; aisw a|b|c still works)
 
 Accounts:
@@ -187,6 +187,7 @@ Accounts:
   aisw resume [words]        find any past conversation with fzf and resume it
   aisw login [a|b|c]         log in a Claude account (empty browser window, email pre-filled)
   aisw login codex | agy     log in Codex / Antigravity; that also makes it a fallback
+  aisw login codex2          a 2nd Codex account (own folder ~/.codex-2; codex3 … too)
 
 Setup and testing:
   aisw setup | unsetup       add / remove account folders, status line and limit hook
@@ -210,7 +211,7 @@ case ${1:-} in
   help|-h) show_help; exit 0 ;;
   status) show_status; exit 0 ;;
   who) show_who; fallback_who; exit 0 ;;
-  codex|agy) go_tool "$1" "$(newest_session_in "$PWD")" "$PWD"; exit ;;
+  codex|codex[1-9]|agy) go_tool "$1" "$(newest_session_in "$PWD")" "$PWD"; exit ;;
   login) shift; do_login "$@"; exit ;;
   ui|u) run_ui; exit ;;
   resume) shift; pick_session "$@"; exit ;;
@@ -226,9 +227,9 @@ if [ -z "$acct" ]; then
   acct=$(pick_account) || {
     echo "All accounts are at their limit:" >&2
     show_status >&2
-    case $(choose_when_used_up) in
-      codex) go_tool codex "$(newest_session_in "$PWD")" "$PWD"; exit ;;
-      agy) go_tool agy "$(newest_session_in "$PWD")" "$PWD"; exit ;;
+    pick=$(choose_when_used_up)
+    case $pick in
+      codex|codex[1-9]|agy) go_tool "$pick" "$(newest_session_in "$PWD")" "$PWD"; exit ;;
       a) acct=a ;;
       b) acct=b ;;
       c) acct=c ;;
@@ -261,9 +262,9 @@ while :; do
   next=$(pick_account) || {
     echo "All accounts are at their limit:" >&2
     show_status >&2
-    case $(choose_when_used_up) in
-      codex) go_tool codex "$(session_file "$sid")" "$cwd"; exit ;;
-      agy) go_tool agy "$(session_file "$sid")" "$cwd"; exit ;;
+    pick=$(choose_when_used_up)
+    case $pick in
+      codex|codex[1-9]|agy) go_tool "$pick" "$(session_file "$sid")" "$cwd"; exit ;;
       a) next=a ;;
       b) next=b ;;
       c) next=c ;;

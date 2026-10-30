@@ -1064,3 +1064,69 @@ def test_menu_accepts_names(home, codex, agy):
     out = run_fb(home, "claude", stdin="Antigravity\n", codex=codex, agy=agy)
     assert out.returncode == 0, out.stderr
     assert (home / "agy.log").exists() and not (home / "codex.log").exists()
+
+
+# ---- Several Codex accounts (codex2… = CODEX_HOME=~/.codex-<n>) ----
+
+FAKE_CODEX_SLOTS = """#!/usr/bin/env bash
+home=${CODEX_HOME:-$HOME/.codex}
+if [ "$1 $2" = "login status" ]; then
+  [ -f "$home/auth.json" ] && echo "Logged in using ChatGPT" || echo "Not logged in"; exit 0
+fi
+if [ "$1" = login ]; then
+  [ "$2" = --device-auth ] && printf 'https://auth.openai.com/codex/device\\nAB12-CD34E\\n' && sleep 0.3
+  mkdir -p "$home"; echo '{}' > "$home/auth.json"; exit 0
+fi
+echo "${CODEX_HOME:-default}|$*" >> "$HOME/codex-slots.log"
+"""
+
+
+@pytest.fixture
+def slot_codex(home):
+    fake = home / "fake-codex-slots"
+    fake.write_text(FAKE_CODEX_SLOTS)
+    fake.chmod(0o755)
+    return fake
+
+
+def test_codex2_logs_in_to_its_own_folder_and_becomes_a_fallback(home, slot_codex):
+    (home / ".codex").mkdir()
+    (home / ".codex" / "auth.json").write_text("{}")
+    out = run_fb(home, "login", "codex2", codex=slot_codex)
+    assert out.returncode == 0, out.stderr
+    assert (home / ".codex-2" / "auth.json").exists()
+    assert "Codex 2 added as a fallback" in out.stdout
+    assert (home / "state" / "fallback").read_text().split() == ["codex2"]
+
+
+def test_who_lists_each_codex_slot(home, slot_codex):
+    (home / "state").mkdir(exist_ok=True)
+    (home / "state" / "fallback").write_text("codex\ncodex2\n")
+    (home / ".codex").mkdir()
+    (home / ".codex" / "auth.json").write_text("{}")
+    lines = run_fb(home, "who", codex=slot_codex).stdout.splitlines()
+    assert lines[-2:] == ["Codex (fallback): Logged in using ChatGPT", "Codex 2 (fallback): Not logged in"]
+
+
+def test_menu_lists_codex_slots_and_hands_over_with_codex_home(home, slot_codex):
+    session(home, str(home), "s-3", {"type": "user", "cwd": str(home), "message": {"content": "go"}})
+    block(home, "a", "b", "c")
+    (home / "state" / "fallback").write_text("codex\ncodex2\n")
+    out = run_fb(home, "claude", stdin="2\n", codex=slot_codex)
+    assert out.returncode == 0, out.stderr
+    assert "1) Codex\n" in out.stderr and "2) Codex 2\n" in out.stderr
+    slot, args = (home / "codex-slots.log").read_text().strip().split("|", 1)
+    assert slot == str(home / ".codex-2") and "hit its usage limit" in args
+
+
+def test_aisw_codex_slot_one_uses_the_default_folder(home, slot_codex):
+    out = run_fb(home, "codex", codex=slot_codex)
+    assert out.returncode == 0, out.stderr
+    assert (home / "codex-slots.log").read_text().startswith("default|")
+
+
+def test_setup_and_unsetup_codex2(home, slot_codex):
+    run_fb(home, "setup", "--codex2", codex=slot_codex)
+    assert (home / "state" / "fallback").read_text().split() == ["codex2"]
+    run_fb(home, "unsetup", "--codex2", codex=slot_codex)
+    assert not (home / "state" / "fallback").exists()

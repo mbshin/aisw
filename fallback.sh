@@ -16,9 +16,31 @@ fallback_remove() {
   if [ -n "$rest" ]; then echo "$rest" > "$STATE/fallback"; else rm -f "$STATE/fallback"; fi
 }
 
-tool_label() { case $1 in codex) echo Codex ;; agy) echo Antigravity ;; esac; }
-tool_bin() { case $1 in codex) echo "$CODEX_BIN" ;; agy) echo "$AGY_BIN" ;; esac; }
-tool_install() { case $1 in codex) echo "brew install --cask codex" ;; agy) echo "brew install --cask antigravity-cli" ;; esac; }
+# Tools: codex (= codex1, ~/.codex), codex2… (~/.codex-2, via CODEX_HOME), agy.
+is_tool() { case $1 in codex|codex[1-9]|agy) return 0 ;; *) return 1 ;; esac; }
+tool_base() { echo "${1%%[0-9]*}"; }
+tool_slot() { local n=${1#"$(tool_base "$1")"}; echo "${n:-1}"; }
+tool_label() {
+  local name
+  case $(tool_base "$1") in codex) name=Codex ;; agy) name=Antigravity ;; esac
+  if [ "$(tool_slot "$1")" = 1 ]; then echo "$name"; else echo "$name $(tool_slot "$1")"; fi
+}
+tool_bin() { case $(tool_base "$1") in codex) echo "$CODEX_BIN" ;; agy) echo "$AGY_BIN" ;; esac; }
+tool_install() {
+  case $(tool_base "$1") in codex) echo "brew install --cask codex" ;; agy) echo "brew install --cask antigravity-cli" ;; esac
+}
+# with_tool <tool> <cmd...>: run cmd with that slot's login folder (Codex slot 2+ = CODEX_HOME=~/.codex-<n>).
+with_tool() {
+  local t=$1 n
+  shift
+  n=$(tool_slot "$t")
+  if [ "$(tool_base "$t")" = codex ] && [ "$n" != 1 ]; then
+    mkdir -p "$HOME/.codex-$n"
+    CODEX_HOME=$HOME/.codex-$n "$@"
+  else
+    "$@"
+  fi
+}
 tool_missing() {
   command -v "$(tool_bin "$1")" >/dev/null && return 1
   echo "$(tool_label "$1") not found: $(tool_install "$1")" >&2
@@ -73,7 +95,7 @@ go_tool() {
   tool_missing "$tool" && return 1
   cd "$dir" || return 1
   if [ -z "$f" ]; then
-    "$bin"
+    with_tool "$tool" "$bin"
     return
   fi
   note=$(mktemp "${TMPDIR:-/tmp}/aisw-handoff.XXXXXX")
@@ -81,8 +103,8 @@ go_tool() {
   prompt="A Claude Code session hit its usage limit. Read $note for the task and progress, \
 check git status and git diff, then continue. Ask before anything destructive."
   echo "Going on in $(tool_label "$tool") (handoff note: $note)."
-  case $tool in
-    codex) "$bin" "$prompt" ;;
+  case $(tool_base "$tool") in
+    codex) with_tool "$tool" "$bin" "$prompt" ;;
     agy) "$bin" -i "$prompt" ;; # -i: first prompt, then stay interactive
   esac
   code=$?
@@ -126,8 +148,8 @@ agy_status() {
 }
 
 fallback_logged_in() {
-  case $1 in
-    codex) "$CODEX_BIN" login status 2>&1 | grep -qi "^logged in" ;;
+  case $(tool_base "$1") in
+    codex) with_tool "$1" "$CODEX_BIN" login status 2>&1 | grep -qi "^logged in" ;;
     agy) [ "$(agy_status)" = "Logged in" ] ;;
   esac
 }
@@ -135,9 +157,9 @@ fallback_logged_in() {
 fallback_who() {
   local tool
   for tool in $(fallbacks); do
-    case $tool in
-      codex) echo "Codex (fallback): $("$CODEX_BIN" login status 2>&1 | head -1)" ;;
-      agy) echo "Antigravity (fallback): $(agy_status)" ;;
+    case $(tool_base "$tool") in
+      codex) echo "$(tool_label "$tool") (fallback): $(with_tool "$tool" "$CODEX_BIN" login status 2>&1 | head -1)" ;;
+      agy) echo "$(tool_label "$tool") (fallback): $(agy_status)" ;;
     esac
   done
 }
@@ -146,10 +168,10 @@ fallback_who() {
 # browser window as Claude logins, so the browser's current ChatGPT login is not reused.
 # If ChatGPT blocks device codes for the account, falls back to the normal browser login.
 codex_login() {
-  local out pid url code rc i
-  tool_missing codex && return 1
+  local tool=${1:-codex} out pid url code rc i
+  tool_missing "$tool" && return 1
   out=$(mktemp "${TMPDIR:-/tmp}/aisw-codex-login.XXXXXX")
-  "$CODEX_BIN" login --device-auth > "$out" 2>&1 &
+  with_tool "$tool" "$CODEX_BIN" login --device-auth > "$out" 2>&1 &
   pid=$!
   for i in $(seq 1 100); do # up to ~20 s for the link and the code
     url=$(tr -d '\033' < "$out" | grep -oE 'https://[A-Za-z0-9./_-]+' | head -1)
@@ -159,7 +181,7 @@ codex_login() {
     sleep 0.2
   done
   if [ -n "$url" ] && [ -n "$code" ]; then
-    echo "== Codex: sign in with your ChatGPT account in the new browser window"
+    echo "== $(tool_label "$tool"): sign in with your ChatGPT account in the new browser window"
     echo "   One-time code: $code   (expires in 15 minutes)"
     "$BROWSER" "$url"
     wait "$pid"
@@ -174,7 +196,7 @@ codex_login() {
     rm -f "$out"
     codex_device_blocked_hint
     echo "== Falling back to the normal Codex login (your regular browser; sign in with the right account)"
-    "$CODEX_BIN" login
+    with_tool "$tool" "$CODEX_BIN" login
     return
   fi
   [ "$rc" -eq 0 ] || cat "$out" >&2

@@ -17,7 +17,7 @@ backup() { cp "$1" "$1.bak-$(date +%Y%m%d-%H%M%S)" && echo "  backup: $1.bak-…
 do_setup() {
   local lib settings acct n
   case ${1:-} in
-    --codex|--agy)
+    --codex|--codex[1-9]|--agy)
       local tool=${1#--}
       tool_missing "$tool" && return 1
       fallback_add "$tool"
@@ -60,7 +60,7 @@ EOF
 do_unsetup() {
   local settings=$HOME/.claude/settings.json rc=$HOME/.zshrc
   case ${1:-} in
-    --codex|--agy)
+    --codex|--codex[1-9]|--agy)
       fallback_remove "${1#--}"
       echo "$(tool_label "${1#--}") fallback off."
       return 0

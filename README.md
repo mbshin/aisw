@@ -116,6 +116,7 @@ Optional: `alias claude='aisw claude'` lets you keep typing `claude`. Old forms 
 | `aisw login [a\|b\|c]` | Log in to every missing account, or one |
 | `aisw login codex` | Log in to Codex (one-time code in an empty browser window) |
 | `aisw login agy` | Log in to Antigravity (signs in on its first start) |
+| `aisw login codex2` | A second Codex account in its own folder (`~/.codex-2`; `codex3` … too) |
 | `aisw help` | All commands |
 
 **free** = not at its limit, so `aisw claude` may use it. **no usage seen yet** = no session ran on it
@@ -126,6 +127,7 @@ yet (numbers arrive after the first reply).
 ```zsh
 aisw login codex             # ChatGPT account → Codex becomes a fallback
 aisw login agy               # Google account → Antigravity becomes a fallback
+aisw login codex2            # another ChatGPT account → "Codex 2" in the menu
 ```
 
 One step each: a successful login also puts the tool on the fallback list. When every Claude account is

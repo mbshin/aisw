@@ -54,6 +54,10 @@ Needs a ChatGPT plan. The code sign-in must be allowed once: chatgpt.com → pro
 Security** → turn on **device code sign-in** (on a Business/Enterprise workspace only the admin can).
 If it's off, `aisw login codex` says so and falls back to the normal browser login.
 
+More than one ChatGPT account? `aisw login codex2` (and `codex3` …) logs each into its own folder
+(`~/.codex-2`, via `CODEX_HOME`); they appear as "Codex 2" … in `aisw who` and in the menu. `aisw codex2`
+hands over to that one.
+
 ### 1.4 Antigravity CLI (optional fallback, Google's Gemini agent)
 
 ```zsh
