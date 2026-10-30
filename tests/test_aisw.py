@@ -442,7 +442,7 @@ def test_all_used_up_hands_over_to_codex_on_yes(home, codex):
     (home / "state" / "fallback").write_text("codex\n")
     out = run(home, "aisw", "claude", stdin="y\n", codex=codex, tmpdir=home)
     assert out.returncode == 0, out.stderr
-    assert "Continue in Codex? [y/N]" in out.stderr
+    assert "1) Codex" in out.stderr and "2) Claude A anyway" in out.stderr
     folder, prompt = (home / "codex.log").read_text().strip().split("|", 1)
     assert folder == str(home) and "hit its usage limit" in prompt
     note = (home / "note.md").read_text()
@@ -971,7 +971,7 @@ def test_unsetup_one_fallback_keeps_the_other(home, codex, agy):
     assert not (home / "state" / "fallback").exists()
 
 
-def test_no_to_codex_then_yes_to_antigravity_hands_over_to_agy(home, codex, agy):
+def test_picking_antigravity_in_the_menu_hands_over_to_agy(home, codex, agy):
     session(
         home, str(home), "s-7",
         {"type": "user", "cwd": str(home), "message": {"content": "fix the build"}},
@@ -979,9 +979,9 @@ def test_no_to_codex_then_yes_to_antigravity_hands_over_to_agy(home, codex, agy)
     )
     block(home, "a", "b", "c")
     (home / "state" / "fallback").write_text("codex\nagy\n")
-    out = run_fb(home, "claude", stdin="n\ny\n", codex=codex, agy=agy)
+    out = run_fb(home, "claude", stdin="2\n", codex=codex, agy=agy)
     assert out.returncode == 0, out.stderr
-    assert "Continue in Codex? [y/N]" in out.stderr and "Continue in Antigravity? [y/N]" in out.stderr
+    assert "1) Codex" in out.stderr and "2) Antigravity" in out.stderr
     assert not (home / "codex.log").exists()
     folder, args = (home / "agy.log").read_text().strip().split("|", 1)
     assert folder == str(home) and args.startswith("-i ") and "hit its usage limit" in args
@@ -1028,3 +1028,39 @@ def test_login_codex_also_adds_it_as_a_fallback(home, device_codex):
 def test_failed_login_adds_nothing(home, device_codex):
     run_codex_login(home, device_codex, {"CODEX_LOGIN_EXIT": "1"})
     assert not (home / "state" / "fallback").exists()
+
+
+def test_menu_can_force_a_claude_account_anyway(home):
+    (home / "hits").write_text("")
+    block(home, "a", "b", "c")
+    out = run(home, "aisw", "claude", stdin="b\n")
+    assert out.returncode == 0, out.stderr
+    assert "1) Claude A anyway" in out.stderr and "0) Stop" in out.stderr
+    assert (home / "calls.log").read_text().splitlines()[0].startswith(".claude-b ")
+
+
+def test_menu_by_number_after_a_limit_hit_resumes_on_the_pick(home):
+    block(home, "b", "c")  # A runs and hits its limit (fake claude), B and C are used up
+    out = run(home, "aisw", "claude", stdin="3\n")  # no fallbacks: 1) A, 2) B, 3) C
+    assert out.returncode == 0, out.stderr
+    calls = (home / "calls.log").read_text().splitlines()
+    assert calls[1].startswith(f".claude-c {home}/work --resume s-123 ")
+
+
+def test_menu_stop_and_bad_input_stop(home, codex):
+    (home / "state").mkdir(exist_ok=True)
+    (home / "state" / "fallback").write_text("codex\n")
+    block(home, "a", "b", "c")
+    for answer in ("\n", "0\n", "9\n", "zzz\n"):
+        out = run(home, "aisw", "claude", stdin=answer, codex=codex)
+        assert out.returncode == 1 and "Stopped" in out.stderr
+    assert not (home / "codex.log").exists() and not (home / "calls.log").exists()
+
+
+def test_menu_accepts_names(home, codex, agy):
+    session(home, str(home), "s-9", {"type": "user", "cwd": str(home), "message": {"content": "x"}})
+    block(home, "a", "b", "c")
+    (home / "state" / "fallback").write_text("codex\nagy\n")
+    out = run_fb(home, "claude", stdin="Antigravity\n", codex=codex, agy=agy)
+    assert out.returncode == 0, out.stderr
+    assert (home / "agy.log").exists() and not (home / "codex.log").exists()

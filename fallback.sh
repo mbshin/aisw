@@ -90,15 +90,32 @@ check git status and git diff, then continue. Ask before anything destructive."
   return $code
 }
 
-# offer_fallback <session file or empty> <folder>: when every Claude account is used up, ask for each
-# enabled fallback in order; the first yes takes over.
-offer_fallback() {
-  local tool ans
-  for tool in $(fallbacks); do
-    printf 'All Claude accounts are used up. Continue in %s? [y/N] ' "$(tool_label "$tool")" >&2
-    read -r ans || ans=
-    case $ans in [yY]*) go_tool "$tool" "$1" "$2"; return ;; esac
+# When every Claude account is used up: one menu with the fallbacks, each Claude account "anyway"
+# (a limit mark can be a guess), or stop. Prints the pick (codex, agy, a, b, c); nothing = stop.
+# Accepts the number, the name, or y (= the first fallback).
+choose_when_used_up() {
+  local opts=() o i ans
+  for o in $(fallbacks); do opts+=("$o"); done
+  for o in $ACCOUNTS; do opts+=("$o"); done
+  echo "Continue with:" >&2
+  for i in "${!opts[@]}"; do
+    o=${opts[$i]}
+    case $o in
+      a|b|c) printf '  %d) Claude %s anyway\n' $((i + 1)) "$(upper "$o")" >&2 ;;
+      *) printf '  %d) %s\n' $((i + 1)) "$(tool_label "$o")" >&2 ;;
+    esac
   done
+  printf '  0) Stop (default)\nChoice: ' >&2
+  read -r ans || ans=
+  ans=$(tr '[:upper:]' '[:lower:]' <<<"$ans")
+  case $ans in
+    ""|0|n|no|stop) return 1 ;;
+    y|yes) o=$(fallbacks | head -1) ;;
+    antigravity) o=agy ;;
+    *[!0-9]*) o=$ans ;;
+    *) o=${opts[$((ans - 1))]:-} ;;
+  esac
+  for i in "${opts[@]}"; do [ -n "$o" ] && [ "$i" = "$o" ] && { echo "$o"; return 0; }; done
   return 1
 }
 

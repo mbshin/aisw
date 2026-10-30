@@ -136,7 +136,7 @@ Order of preference is A → B → C: put the account you want to use up first i
 3. aisw prints *"A hit its limit. Going on in B in 3s (Ctrl+C to stop)..."*
 4. B resumes the same conversation and is told to check `git status` / `git diff` and continue.
 
-All used up? aisw stops, prints each reset time and the `--resume` command for later.
+All used up? aisw prints each reset time and a menu: a fallback (Codex, Antigravity), a Claude account anyway, or stop (then it prints the `--resume` command for later).
 
 When the plan reports usage, the status line warns early: ⚠ at 80%, a notification at 90% ("good time to
 commit"), and the account counts as used up at 95% (5h) or 98% (7 days), so the next `claude` starts
@@ -216,8 +216,8 @@ aisw who          # last lines: "Codex (fallback): Logged in using ChatGPT", "An
 
 | Situation | What happens |
 |---|---|
-| Last free Claude account hits its limit, you type `/exit` | "All Claude accounts are used up. Continue in Codex? [y/N]"; on no: "Continue in Antigravity? [y/N]" |
-| You start `aisw claude` while all are used up | Same questions |
+| Last free Claude account hits its limit, you type `/exit` | A menu: 1) Codex, 2) Antigravity, Claude A/B/C anyway, 0) Stop. Type the number or name |
+| You start `aisw claude` while all are used up | Same menu |
 | `aisw codex` · `aisw agy` | Hand this folder's newest Claude session over now |
 
 The handoff note holds the first request, the last five, Claude's last message and the git state. Codex

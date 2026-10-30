@@ -129,12 +129,27 @@ aisw login agy               # Google account → Antigravity becomes a fallback
 ```
 
 One step each: a successful login also puts the tool on the fallback list. When every Claude account is
-used up, aisw asks for each fallback in the order you logged them in:
-**"Continue in Codex? [y/N]"**, then **"Continue in Antigravity? [y/N]"**. On yes it writes a handoff note
-(first request, last five requests, Claude's last message, `git status` / `git diff --stat`) to a temp file
-and starts the tool in the same folder (`codex "<prompt>"`, `agy -i "<prompt>"`), told to read it, check git
-and continue. The note is deleted when the tool exits. `aisw codex` and `aisw agy` do the same on demand.
-Neither can read Claude's conversation, so they work from the note and the files, not the full history.
+used up, aisw shows one menu:
+
+```
+All accounts are at their limit:
+A: used up until Fri 18:40
+…
+Continue with:
+  1) Codex
+  2) Antigravity
+  3) Claude A anyway
+  4) Claude B anyway
+  5) Claude C anyway
+  0) Stop (default)
+Choice:
+```
+
+Type a number or a name (`codex`, `agy`, `a`, …). Codex and Antigravity get a handoff note (first request,
+last five requests, Claude's last message, `git status` / `git diff --stat`) as their first prompt
+(`codex "<prompt>"`, `agy -i "<prompt>"`); the note is deleted when they exit. "Anyway" runs Claude on that
+account even though it's marked used up (a limit mark can be a guess). `aisw codex` and `aisw agy` hand
+over on demand. Neither tool can read Claude's conversation, so they work from the note and the files.
 Off again: `aisw unsetup --codex` / `--agy`.
 
 ## How it works

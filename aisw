@@ -194,8 +194,8 @@ Setup and testing:
   aisw test-hit a|b|c [dir]  pretend an account just hit its limit
 
 Fallbacks (turned on by aisw login codex / agy; off: aisw unsetup --codex / --agy):
-  all Claude accounts used up → asks "Continue in Codex? [y/N]", then "Continue in Antigravity? [y/N]",
-  with a handoff note; aisw codex / aisw agy hand over right away
+  all Claude accounts used up → a menu: Codex, Antigravity, a Claude account anyway, or stop
+  (Codex/Antigravity get a handoff note); aisw codex / aisw agy hand over right away
 
 When a limit is hit: wait for the notification, type /exit, it goes on in the next account.
 Claude Code's own help: claude --help (or command claude --help). Docs: github.com/mbshin/aisw
@@ -226,9 +226,14 @@ if [ -z "$acct" ]; then
   acct=$(pick_account) || {
     echo "All accounts are at their limit:" >&2
     show_status >&2
-    offer_fallback "$(newest_session_in "$PWD")" "$PWD" && exit 0
-    echo "Force one with: aisw claude a|b|c" >&2
-    exit 1
+    case $(choose_when_used_up) in
+      codex) go_tool codex "$(newest_session_in "$PWD")" "$PWD"; exit ;;
+      agy) go_tool agy "$(newest_session_in "$PWD")" "$PWD"; exit ;;
+      a) acct=a ;;
+      b) acct=b ;;
+      c) acct=c ;;
+      *) echo "Stopped. Later: aisw claude, or force one with aisw claude a|b|c" >&2; exit 1 ;;
+    esac
   }
 fi
 
@@ -256,9 +261,14 @@ while :; do
   next=$(pick_account) || {
     echo "All accounts are at their limit:" >&2
     show_status >&2
-    offer_fallback "$(session_file "$sid")" "$cwd" && exit 0
-    echo "Resume later with: aisw claude --resume $sid" >&2
-    exit $code
+    case $(choose_when_used_up) in
+      codex) go_tool codex "$(session_file "$sid")" "$cwd"; exit ;;
+      agy) go_tool agy "$(session_file "$sid")" "$cwd"; exit ;;
+      a) next=a ;;
+      b) next=b ;;
+      c) next=c ;;
+      *) echo "Resume later with: aisw claude --resume $sid" >&2; exit $code ;;
+    esac
   }
   echo "$(upper "$acct") hit its limit. Going on in $(upper "$next") in ${WAIT}s (Ctrl+C to stop)..."
   sleep "$WAIT" || exit $code
