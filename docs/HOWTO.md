@@ -29,7 +29,7 @@ Each `add` signs in right away and only signs in (the tool's chat screen doesn't
 | Tool | Sign-in |
 |---|---|
 | Claude | `claude auth login` in an empty Chrome profile in Incognito, email filled in; the window closes after |
-| Codex | `codex login` in your normal browser (its sign-in didn't finish in an empty profile) |
+| Codex | `codex login --device-auth`: a one-time code shows in Terminal, the link opens in the same empty Incognito window. If ChatGPT blocks device codes for the account (chatgpt.com → Settings → Security → device code sign-in), press Ctrl+C: it falls back to `codex login` in your normal browser |
 | Antigravity | `agy` starts once and quits by itself after you sign in |
 
 Codex and Antigravity don't report which account is signed in, so `add` asks for the email (a label for

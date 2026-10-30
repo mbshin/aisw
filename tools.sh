@@ -79,13 +79,57 @@ sign_in() {
       if [ -n "$email" ]; then echo "$email" > "$STATE/$name.email"; fi
       [ "$code" -eq 0 ] && [ -n "$email" ]
       ;;
-    codex)
-      echo "== $name: sign in to Codex with your ChatGPT account in your browser"
-      # Codex's sign-in hung in aisw's empty profile (1.7.1), so it keeps the normal browser.
-      in_folder codex "$dir" env -u BROWSER "$CODEX_BIN" login && codex_signed_in "$dir"
-      ;;
+    codex) codex_device_login "$name" "$dir" && codex_signed_in "$dir" ;;
     agy) agy_login ;;
   esac
+}
+
+# Codex with a one-time code (`codex login --device-auth`): the code shows here, the link opens in the same
+# empty Incognito window as Claude sign-ins. If ChatGPT blocks device codes for the account (the page says
+# so; Ctrl+C here) or the code never shows, falls back to Codex's normal browser login.
+codex_device_login() {
+  local name=$1 dir=$2 out pid url code rc i alive blocked=
+  out=$(mktemp "${TMPDIR:-/tmp}/aisw-codex-login.XXXXXX")
+  in_folder codex "$dir" "$CODEX_BIN" login --device-auth > "$out" 2>&1 &
+  pid=$!
+  for i in $(seq 1 100); do # up to ~20 s for the link and the code
+    alive=; kill -0 "$pid" 2>/dev/null && alive=1  # checked first, so a quick exit's output is still read
+    url=$(tr -d '\033' < "$out" | grep -oE 'https://[A-Za-z0-9./_?=&-]+' | head -1)
+    code=$(tr -d '\033' < "$out" | grep -oE '[A-Z0-9]{4}-[A-Z0-9]{4,6}' | head -1)
+    [ -n "$url" ] && [ -n "$code" ] && break
+    [ -n "$alive" ] || break
+    sleep 0.2
+  done
+  if [ -n "$url" ] && [ -n "$code" ]; then
+    echo "== $name: sign in to Codex with your ChatGPT account in the new Incognito window"
+    echo "   One-time code: $code   (expires in 15 minutes)"
+    echo "   If the page says device code sign-in is off, press Ctrl+C for the normal browser login."
+    "${AISW_BROWSER:-$(dirname "$0")/signin-browser.sh}" "$url"
+    trap 'blocked=1; kill "$pid" 2>/dev/null' INT
+    wait "$pid"
+    rc=$?
+    trap - INT
+    close_signin_browser
+    [ -n "$blocked" ] && { wait "$pid" 2>/dev/null; echo; rc=1; }
+  else
+    kill "$pid" 2>/dev/null
+    wait "$pid" 2>/dev/null
+    rc=1
+    blocked=1
+  fi
+  if [ "$rc" -ne 0 ] && { [ -n "$blocked" ] || grep -qi "device code" "$out"; }; then
+    rm -f "$out"
+    cat <<'EOF2'
+ChatGPT doesn't allow device-code sign-in for this account. To use it next time:
+  chatgpt.com → profile → Settings → Security → turn on device code sign-in
+== Falling back to the normal Codex login (your regular browser; sign in with the right account)
+EOF2
+    in_folder codex "$dir" env -u BROWSER "$CODEX_BIN" login
+    return
+  fi
+  [ "$rc" -eq 0 ] || cat "$out" >&2
+  rm -f "$out"
+  return "$rc"
 }
 
 # Antigravity signs in on its first start (no login command). Start it, watch for the sign-in in the

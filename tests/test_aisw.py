@@ -44,6 +44,10 @@ if [ "$1" = login ]; then
   fi
   echo "$dir $*" >> "$HOME/codex-logins.log"
   [ -f "$HOME/login-fails" ] && exit 1
+  if [ "${2:-}" = --device-auth ]; then
+    [ -f "$HOME/device-blocked" ] && { echo "Enable device code sign-in in ChatGPT Security Settings"; exit 1; }
+    echo "Open https://auth.example/codex/device and enter ABCD-1234"
+  fi
   mkdir -p "$dir"; echo '{}' > "$dir/auth.json"; exit 0
 fi
 echo "codex ${CODEX_HOME:-unset} ${AISW_ACCOUNT:-} $*" >> "$HOME/calls.log"
@@ -414,8 +418,26 @@ def test_add_codex_first_uses_codex_home_then_its_own_folder(home):
     aisw(home, "add", "codex", "work")
     assert accounts(home) == [f"a codex {home}/.codex", f"work codex {home}/state/home/work"]
     assert (home / "codex-logins.log").read_text().splitlines() == [
-        f"{home}/.codex login", f"{home}/state/home/work login",
+        f"{home}/.codex login --device-auth", f"{home}/state/home/work login --device-auth",
     ]
+
+
+def test_add_codex_shows_the_code_and_opens_the_link_in_the_signin_browser(home):
+    write_exec(home / "bin" / "open-link", '#!/usr/bin/env bash\necho "$1" >> "$HOME/opened.log"\n')
+    out = aisw(home, "add", "codex", extra={"AISW_BROWSER": str(home / "bin" / "open-link")})
+    assert "One-time code: ABCD-1234" in out.stdout
+    assert (home / "opened.log").read_text().strip() == "https://auth.example/codex/device"
+    assert accounts(home) == [f"a codex {home}/.codex"]
+
+
+def test_add_codex_falls_back_to_the_browser_login_when_device_codes_are_blocked(home):
+    (home / "device-blocked").write_text("")
+    out = aisw(home, "add", "codex")
+    assert "doesn't allow device-code sign-in" in out.stdout
+    assert (home / "codex-logins.log").read_text().splitlines() == [
+        f"{home}/.codex login --device-auth", f"{home}/.codex login",
+    ]
+    assert accounts(home) == [f"a codex {home}/.codex"]
 
 
 def test_add_codex_already_signed_in_skips_the_sign_in(home):
